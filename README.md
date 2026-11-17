@@ -2,6 +2,8 @@
 
 从新闻中发现变化，追踪你关心的人与事。
 
+> 本项目是 [TrendRadar](https://github.com/sansan0/TrendRadar) 的修改版，非官方版本。修改内容与许可见文末「来源与许可」。
+
 NewsSignal Flow 是一个可以自行部署的新闻信号观察工具。它采集热榜和 RSS，按你的兴趣进行 AI 筛选，再把相关报道整理到公司、产品、人物、技术、政策等具体对象下，展示它们的进展、关注度与传播变化。
 
 同一件事可能被十家媒体反复报道，也可能只有一家媒体披露了新进展。NewsSignal Flow 把“事情发生了什么变化”和“报道扩散到了哪里”分开呈现，帮助你从重复新闻中找到值得持续关注的信号。
@@ -211,6 +213,26 @@ AI 兴趣筛选和图谱分析会将新闻标题及相关上下文发送给你�
 
 新闻进展由模型根据标题归纳，可能存在遗漏、误合并或误判，请通过原文核对。热榜通常没有可靠发布时间，系统会回退到首次采集时间，并在详情中标记。因此时间回放展示的是采集范围内可观察到的变化。
 
-NewsSignal Flow 基于 [TrendRadar](https://github.com/sansan0/TrendRadar) 改造，保留其热榜、RSS 采集、兴趣筛选与通知能力，增加面向具体对象的新闻图谱、时间回放和 Inbox。热榜数据依赖上游接入的 [newsnow](https://github.com/ourongxing/newsnow) 服务，RSS 来自配置的订阅源。
+热榜数据依赖上游接入的 [newsnow](https://github.com/ourongxing/newsnow) 服务，RSS 来自配置的订阅源。
 
-项目沿用 **GPL-3.0**，完整条款见 [LICENSE](LICENSE)。上游原中文说明保留在 [README.upstream.md](README.upstream.md)，其中的界面、部署方式和功能说明以原项目为准。
+## 来源与许可
+
+本项目是 [TrendRadar](https://github.com/sansan0/TrendRadar) 的**修改版，非官方版本**。
+
+| | |
+| --- | --- |
+| 上游项目 | [sansan0/TrendRadar](https://github.com/sansan0/TrendRadar) |
+| 基线版本 | v6.10.0 |
+| 修改日期 | 2026-11-17 |
+| 许可 | GPL-3.0，见 [LICENSE](LICENSE) |
+
+在上游基础上做出的修改：
+
+- 保留上游的热榜/RSS 采集、AI 兴趣筛选、通知与报告能力，内核 `trendradar/`、`mcp_server/` 大部分保持原样；
+- 新增 `web/` 节点观测界面（Next.js）：节点列表、节点图谱、三小时时间片回放、Inbox；
+- 新增 `web/scripts/export_entity_data.py` 等脚本，把兴趣筛选结果整理成节点快照；
+- 新增 `docker/Dockerfile.full`、`docker/entrypoint-full.sh` 与 `scripts/` 下的本地部署脚本；
+- 调整运行时路径解析、新增 `config/custom/rss_platforms.yaml` 配置覆盖、把 MCP 默认监听地址改为仅本机；
+- 重写本 README，上游原中文说明保留在 [README.upstream.md](README.upstream.md)，其中的界面、部署方式和功能说明以原项目为准。
+
+本项目的修改部分与上游代码一起，整体按 **GPL-3.0** 发布。（GPL-3.0 第 5(a) 条要求分发修改版时显著声明修改并注明日期，本段即为此声明。）
