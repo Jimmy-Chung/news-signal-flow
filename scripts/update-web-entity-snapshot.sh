@@ -15,12 +15,18 @@ read_keychain() {
   fi
 }
 
+if [[ -f "${PROJECT_DIR}/.env" ]]; then
+  set -a
+  source "${PROJECT_DIR}/.env"
+  set +a
+fi
+
 AI_API_KEY="${AI_API_KEY:-$(read_keychain 'TrendRadar AI API Key')}"
 AI_MODEL="${AI_MODEL:-$(read_keychain 'TrendRadar AI Model')}"
 AI_API_BASE="${AI_API_BASE:-$(read_keychain 'TrendRadar AI API Base')}"
 
 if [[ -z "${AI_API_KEY}" ]]; then
-  echo "缺少 TrendRadar AI API Key，无法更新实体快照" >&2
+  echo "缺少 TrendRadar AI API Key，无法更新观测快照" >&2
   exit 1
 fi
 
@@ -51,4 +57,4 @@ fi
   --days "${ENTITY_LOOKBACK_DAYS:-9}" \
   --batch-size "${ENTITY_BATCH_SIZE:-25}"
 
-echo "[实体雷达] 最新快照已写入 ${SNAPSHOT_PATH}"
+echo "[观测台] 最新快照已写入 ${SNAPSHOT_PATH}"

@@ -55,11 +55,11 @@ PYTHONUNBUFFERED=1 "${python_command[@]}" -m trendradar "$@"
 
 if [[ "${normal_collection}" == "true" && "${TREND_RADAR_SKIP_WEB_EXPORT:-0}" != "1" ]]; then
   if [[ -x "${PROJECT_DIR}/scripts/update-web-entity-snapshot.sh" ]]; then
-    echo "[实体雷达] 采集完成，开始增量更新 Web 实体快照"
+    echo "[观测台] 采集完成，开始增量更新 Web 观测快照"
     if ! "${PROJECT_DIR}/scripts/update-web-entity-snapshot.sh"; then
-      echo "[实体雷达] 快照更新失败；本轮采集和推送已成功，不影响下一次任务" >&2
+      echo "[观测台] 快照更新失败；本轮采集和推送已成功，不影响下一次任务" >&2
     fi
   else
-    echo "[实体雷达] 未找到快照更新脚本，跳过 Web 更新" >&2
+    echo "[观测台] 未找到快照更新脚本，跳过 Web 更新" >&2
   fi
 fi

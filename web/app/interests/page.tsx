@@ -1,5 +1,5 @@
-import EntityRadar from "../EntityRadar";
+import { redirect } from "next/navigation";
 
 export default function InterestsPage() {
-  return <EntityRadar view="interests" />;
+  redirect("/entities");
 }

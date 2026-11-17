@@ -25,3 +25,6 @@ local/*.plist
 .env.full
 .env.local
 secrets.env
+
+# 本地 agent 工具状态
+.omc/

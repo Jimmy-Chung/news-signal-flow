@@ -220,9 +220,10 @@ def load_day(news_db: Path, rss_db: Path | None, day: str) -> tuple[list[Story],
             JOIN ai_filter_tags t ON t.id = r.tag_id
             LEFT JOIN news_items n
               ON r.source_type = 'hotlist' AND n.id = r.news_item_id
-            -- 图谱保留兴趣规则变更前已经产生的匹配结果。旧结果不会
-            -- 参与后续推送，但仍属于当时已观测到的历史，应该可回放。
+            -- 只展示当前生效兴趣标签的匹配结果。删除某个兴趣后，旧标签会被
+            -- 标记为 deprecated，对应节点不应继续出现在图谱里。
             WHERE r.relevance_score >= 0.7
+              AND t.status = 'active'
             """,
         )
         rss_items: dict[int, sqlite3.Row] = {}

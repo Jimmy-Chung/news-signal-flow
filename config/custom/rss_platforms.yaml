@@ -1,0 +1,34 @@
+platforms:
+  enabled: true
+  sources:
+  - id: toutiao
+    enabled: true
+  - id: baidu
+    enabled: true
+  - id: wallstreetcn-hot
+    enabled: true
+  - id: thepaper
+    enabled: true
+  - id: bilibili-hot-search
+    enabled: true
+  - id: cls-hot
+    enabled: true
+  - id: ifeng
+    enabled: true
+  - id: tieba
+    enabled: true
+  - id: weibo
+    enabled: true
+  - id: douyin
+    enabled: true
+  - id: zhihu
+    enabled: true
+rss:
+  enabled: true
+  feeds:
+  - id: hacker-news
+    enabled: true
+  - id: ruanyifeng
+    enabled: false
+  - id: yahoo-finance
+    enabled: true

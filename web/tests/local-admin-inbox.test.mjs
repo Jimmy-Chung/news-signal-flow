@@ -129,7 +129,7 @@ test("public Inbox API supports the full workflow while management stays protect
   assert.equal(list.completedCount, 0);
 });
 
-test("Inbox is protected by default and uses configured config/data paths", async (context) => {
+test("Inbox 免口令 by default while management stays token-protected", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "trendradar-admin-server-"));
   const token = "server-admin-token";
   const { child, baseUrl } = await startAdminServer(directory, token, {
@@ -140,20 +140,40 @@ test("Inbox is protected by default and uses configured config/data paths", asyn
     await rm(directory, { recursive: true, force: true });
   });
 
-  const unauthorizedInbox = await fetch(`${baseUrl}/api/local-admin/inbox`);
-  assert.equal(unauthorizedInbox.status, 401);
-  const spoofedLocalInbox = await fetch(`${baseUrl}/api/local-admin/inbox`, {
-    headers: { "x-trendradar-local-origin": "1" },
-  });
-  assert.equal(spoofedLocalInbox.status, 401);
+  // Inbox is fully public: no token, no local-origin header, no TREND_RADAR_INBOX_PUBLIC.
+  const inbox = await fetch(`${baseUrl}/api/local-admin/inbox`);
+  assert.equal(inbox.status, 200);
+  assert.deepEqual((await inbox.json()).items, []);
 
-  const headers = { "x-trendradar-admin-token": token };
-  const authorizedInbox = await fetch(`${baseUrl}/api/local-admin/inbox`, { headers });
-  assert.equal(authorizedInbox.status, 200);
+  const headers = { "content-type": "application/json" };
+  const payload = {
+    title: "美联储维持利率不变",
+    summary: "美联储宣布维持基准利率不变",
+    originalUrl: "https://example.com/fed-rate",
+    source: "example",
+    entityId: "entity-fed",
+    entityName: "美联储",
+    entityType: "organization",
+    eventId: "event-fed-rate",
+    eventType: "policy_decision",
+    changeType: "regulation",
+    publishedAt: "2026-07-30T14:00+08:00",
+    observedAt: null,
+  };
+  const created = await fetch(`${baseUrl}/api/local-admin/inbox`, { method: "POST", headers, body: JSON.stringify(payload) });
+  assert.equal(created.status, 201);
+  const item = (await created.json()).item;
+  const patched = await fetch(`${baseUrl}/api/local-admin/inbox/${item.id}`, { method: "PATCH", headers, body: JSON.stringify({ completed: true }) });
+  assert.equal(patched.status, 200);
+  const deleted = await fetch(`${baseUrl}/api/local-admin/inbox/${item.id}`, { method: "DELETE" });
+  assert.equal(deleted.status, 200);
 
-  const interests = await fetch(`${baseUrl}/api/local-admin/interests`, { headers });
-  assert.equal(interests.status, 200);
-  assert.match((await interests.json()).content, /AI 产品/);
+  // Management endpoints stay protected without a token.
+  const interests = await fetch(`${baseUrl}/api/local-admin/interests`);
+  assert.equal(interests.status, 401);
+  const authorizedInterests = await fetch(`${baseUrl}/api/local-admin/interests`, { headers: { "x-trendradar-admin-token": token } });
+  assert.equal(authorizedInterests.status, 200);
+  assert.match((await authorizedInterests.json()).content, /AI 产品/);
 
   const entities = await fetch(`${baseUrl}/api/local-admin/entities`);
   assert.equal(entities.status, 200);

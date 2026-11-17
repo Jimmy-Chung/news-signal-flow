@@ -12,6 +12,12 @@ read_keychain() {
     -w 2>/dev/null || true
 }
 
+if [[ -f "${PROJECT_DIR}/.env" ]]; then
+  set -a
+  source "${PROJECT_DIR}/.env"
+  set +a
+fi
+
 FEISHU_WEBHOOK_URL="${FEISHU_WEBHOOK_URL:-$(read_keychain 'TrendRadar Feishu Webhook')}"
 AI_API_KEY="${AI_API_KEY:-$(read_keychain 'TrendRadar AI API Key')}"
 AI_MODEL="${AI_MODEL:-$(read_keychain 'TrendRadar AI Model')}"

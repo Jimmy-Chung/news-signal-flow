@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 import yaml
 
 from .config import parse_multi_account_config, validate_paired_configs
+from .config_overlay import apply_rss_platforms_overlay
 from .paths import get_config_path
 from trendradar.utils.time import DEFAULT_TIMEZONE
 
@@ -93,7 +94,10 @@ def _load_notification_config(config_data: Dict) -> Dict:
     max_accounts_env = _get_env_int_or_none("MAX_ACCOUNTS_PER_CHANNEL")
 
     return {
-        "ENABLE_NOTIFICATION": notification.get("enabled", True),
+        # 本机后台在“保存兴趣后自动刷新”这类内部采集时会设置该环境变量，
+        # 避免绕过用户在页面上对推送的确认。
+        "ENABLE_NOTIFICATION": notification.get("enabled", True)
+        and not _get_env_bool("TREND_RADAR_SKIP_NOTIFICATION"),
         "MESSAGE_BATCH_SIZE": batch_size.get("default", 4000),
         "DINGTALK_BATCH_SIZE": batch_size.get("dingtalk", 20000),
         "FEISHU_BATCH_SIZE": batch_size.get("feishu", 29000),
@@ -544,6 +548,13 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
     with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f)
+
+    # 合并 RSS/热榜 overlay（config/custom/rss_platforms.yaml），只影响 platforms/rss 的开关
+    overlay_path = Path(config_path).parent / "custom" / "rss_platforms.yaml"
+    if overlay_path.exists():
+        with open(overlay_path, "r", encoding="utf-8") as f:
+            overlay_data = yaml.safe_load(f) or {}
+        apply_rss_platforms_overlay(config_data, overlay_data)
 
     print(f"配置文件加载成功: {config_path}")
 

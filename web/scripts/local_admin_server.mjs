@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addInboxItem, listInboxItems, removeInboxItem, setInboxItemCompleted } from "../lib/inbox_store.mjs";
+import { readEnvFile, setEnvVars } from "../lib/env_file.mjs";
+import { validateInterestContent } from "../lib/interest_validation.mjs";
 
 const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const projectDir = path.resolve(process.env.TREND_RADAR_PROJECT_DIR || path.resolve(webDir, ".."));
@@ -23,9 +25,11 @@ const accountName = process.env.USER || "trendradar";
 const adminPort = Number(process.env.TREND_RADAR_ADMIN_PORT || "3003");
 const directDeployment = process.env.TREND_RADAR_DEPLOY_MODE === "direct";
 const trustLocalOrigin = process.env.TREND_RADAR_TRUST_LOCAL_ORIGIN === "true";
-const publicInbox = process.env.TREND_RADAR_INBOX_PUBLIC === "true";
 const jobs = new Map();
 let activeJobId = null;
+// uv 默认把缓存放在 ~/.cache/uv；如果 HOME 不可写（容器只读挂载、沙箱、受限账户），
+// 连 `uv run python` 都起不来。统一指到一个可写目录，部署和本地都不受影响。
+const uvCacheDir = process.env.UV_CACHE_DIR || path.join(os.tmpdir(), "trendradar-uv-cache");
 
 function keychainToken() {
   if (process.platform !== "darwin") {
@@ -70,10 +74,12 @@ function appendLog(job, value) {
   job.updatedAt = new Date().toISOString();
 }
 
-function runCommand(job, command, args, cwd = projectDir) {
+async function runCommand(job, command, args, cwd = projectDir, extraEnv = {}) {
+  // UI 保存的 .env（例如 DeepSeek Key）对任务命令立即生效；已存在的进程环境变量优先。
+  const envValues = await readEnvFile(path.join(projectDir, ".env")).catch(() => ({}));
   return new Promise((resolve, reject) => {
     appendLog(job, `\n$ ${[command, ...args].join(" ")}\n`);
-    const child = spawn(command, args, { cwd, env: { ...process.env, PYTHONUNBUFFERED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env: { ...envValues, ...process.env, UV_CACHE_DIR: uvCacheDir, ...extraEnv, PYTHONUNBUFFERED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout.on("data", (chunk) => appendLog(job, chunk.toString()));
     child.stderr.on("data", (chunk) => appendLog(job, chunk.toString()));
     child.on("error", reject);
@@ -93,12 +99,14 @@ async function ensureCollectorIdle() {
   }
 }
 
-function startJob(kind) {
+function startJob(kind, options = {}) {
   if (activeJobId) throw new Error("已有任务正在执行，请等待完成");
   const id = crypto.randomUUID();
   const job = { id, kind, status: "running", log: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   jobs.set(id, job);
   activeJobId = id;
+  // 保存兴趣规则后自动触发的采集只刷新数据，不向已配置的飞书/钉钉等渠道推送。
+  const skipNotificationEnv = options.skipNotification ? { TREND_RADAR_SKIP_NOTIFICATION: "1" } : {};
   const work = async () => {
     if (directDeployment && kind === "deploy") {
       await runCommand(job, "scripts/run-trendradar.sh", ["--doctor"]);
@@ -109,7 +117,7 @@ function startJob(kind) {
       await ensureCollectorIdle();
       await runCommand(job, "scripts/run-trendradar.sh", ["--doctor"]);
       await runCommand(job, "scripts/run-trendradar.sh", ["--show-schedule"]);
-      await runCommand(job, "scripts/run-trendradar.sh", []);
+      await runCommand(job, "scripts/run-trendradar.sh", [], projectDir, skipNotificationEnv);
     } else if (kind === "deploy") {
       await runCommand(job, "scripts/run-trendradar-local.sh", ["--doctor"]);
       await runCommand(job, "scripts/run-trendradar-local.sh", ["--show-schedule"]);
@@ -121,7 +129,7 @@ function startJob(kind) {
       await runCommand(job, "scripts/run-trendradar-local.sh", ["--doctor"]);
       await runCommand(job, "scripts/run-trendradar-local.sh", ["--show-schedule"]);
       await runCommand(job, "scripts/deploy-local-runtime.sh", []);
-      await runCommand(job, path.join(runtimeDir, "scripts/run-trendradar-local.sh"), [], runtimeDir);
+      await runCommand(job, path.join(runtimeDir, "scripts/run-trendradar-local.sh"), [], runtimeDir, skipNotificationEnv);
     }
   };
   work().then(() => {
@@ -136,13 +144,30 @@ function startJob(kind) {
 }
 
 async function saveInterests(content) {
-  if (typeof content !== "string" || content.length < 40 || content.length > 50000) throw new Error("兴趣配置内容无效");
-  for (const heading of ["必须提醒", "感兴趣", "明确不要"]) {
-    if (!content.includes(heading)) throw new Error(`缺少“${heading}”配置段`);
-  }
+  const result = validateInterestContent(content);
+  if (!result.ok) throw new Error(result.error);
   const tempPath = `${interestsPath}.tmp`;
   await fs.writeFile(tempPath, content.endsWith("\n") ? content : `${content}\n`, "utf8");
   await fs.rename(tempPath, interestsPath);
+}
+
+function runPythonScript(script, args, inputValue = null) {
+  return new Promise((resolve, reject) => {
+    const command = process.env.TREND_RADAR_PYTHON || process.env.TREND_RADAR_UV_BIN || "uv";
+    const fullArgs = process.env.TREND_RADAR_PYTHON ? [script, ...args] : ["run", "python", script, ...args];
+    const child = spawn(command, fullArgs, {
+      cwd: projectDir,
+      env: { ...process.env, UV_CACHE_DIR: uvCacheDir },
+      stdio: inputValue !== null ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("exit", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `命令执行失败（${code}）`)));
+    if (inputValue !== null) child.stdin.end(JSON.stringify(inputValue));
+  });
 }
 
 const server = http.createServer(async (req, res) => {
@@ -157,17 +182,23 @@ const server = http.createServer(async (req, res) => {
         const stat = await fs.stat(runtimeSnapshotPath);
         return json(res, 200, { snapshot: JSON.parse(content), updatedAt: stat.mtime.toISOString() });
       } catch (error) {
-        if (error?.code === "ENOENT") return json(res, 503, { error: "实体快照尚未生成，请先完成一次采集或节点分析" });
+        if (error?.code === "ENOENT") return json(res, 503, { error: "观测快照尚未生成，请先完成一次采集或节点分析" });
         throw error;
       }
     }
-
-    if (url.pathname.startsWith("/api/local-admin/inbox") && !publicInbox && !authorized(req)) {
-      return json(res, 401, { error: "Inbox 需要管理口令" });
+    if (req.method === "GET" && url.pathname === "/api/local-admin/readiness") {
+      let interestsValid = false;
+      try {
+        interestsValid = validateInterestContent(await fs.readFile(interestsPath, "utf8")).ok;
+      } catch {
+        interestsValid = false;
+      }
+      const envValues = await readEnvFile(path.join(projectDir, ".env"));
+      const apiKey = process.env.AI_API_KEY || envValues.AI_API_KEY || "";
+      return json(res, 200, { interestsValid, apiKeySet: Boolean(apiKey) });
     }
 
-    // Local preview can opt into a public Inbox. Server deployments default
-    // to token-protected writes and reads.
+    // Inbox 完全免口令：任何会话都能读、存、完成、恢复、移除。
     if (req.method === "GET" && url.pathname === "/api/local-admin/inbox") {
       const items = await listInboxItems(inboxPath);
       return json(res, 200, {
@@ -195,31 +226,89 @@ const server = http.createServer(async (req, res) => {
     if (!url.pathname.startsWith("/api/local-admin/") || !authorized(req)) return json(res, 401, { error: "需要本机访问或管理口令" });
 
     if (req.method === "GET" && url.pathname === "/api/local-admin/interests") {
-      const content = await fs.readFile(interestsPath, "utf8");
-      const stat = await fs.stat(interestsPath);
-      return json(res, 200, { content, updatedAt: stat.mtime.toISOString(), path: "config/custom/ai/user_interests.txt" });
+      let content = "";
+      let updatedAt = "";
+      try {
+        content = await fs.readFile(interestsPath, "utf8");
+        updatedAt = (await fs.stat(interestsPath)).mtime.toISOString();
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      return json(res, 200, { content, updatedAt, path: "config/custom/ai/user_interests.txt" });
     }
     if (req.method === "POST" && url.pathname === "/api/local-admin/interests") {
       const payload = await body(req);
       await saveInterests(payload.content);
       return json(res, 200, { saved: true, updatedAt: new Date().toISOString() });
     }
+    if (req.method === "DELETE" && url.pathname === "/api/local-admin/interests") {
+      // 清空配置：移除文件本身，让 readiness 与首次使用引导重新生效。
+      await fs.unlink(interestsPath).catch((error) => {
+        if (error?.code !== "ENOENT") throw error;
+      });
+      return json(res, 200, { cleared: true });
+    }
+    if (req.method === "GET" && url.pathname === "/api/local-admin/config") {
+      return json(res, 200, JSON.parse(await runPythonScript("web/scripts/config_rss_platforms.py", ["read"])));
+    }
+    if (req.method === "POST" && url.pathname === "/api/local-admin/config") {
+      const payload = await body(req);
+      return json(res, 200, JSON.parse(await runPythonScript("web/scripts/config_rss_platforms.py", ["write"], payload)));
+    }
+    if (req.method === "GET" && url.pathname === "/api/local-admin/deepseek") {
+      const envValues = await readEnvFile(path.join(projectDir, ".env"));
+      const model = process.env.AI_MODEL || envValues.AI_MODEL || "";
+      const key = process.env.AI_API_KEY || envValues.AI_API_KEY || "";
+      const masked = key ? `${key.slice(0, 4)}…${key.slice(-4)}` : "";
+      return json(res, 200, { model, apiKeySet: Boolean(key), apiKeyMasked: masked });
+    }
+    if (req.method === "POST" && url.pathname === "/api/local-admin/deepseek") {
+      const payload = await body(req);
+      const updates = {};
+      if (typeof payload.model === "string" && payload.model.trim()) {
+        // UI 只展示模型名，LiteLLM 需要 provider/model；没写前缀时按 DeepSeek 补全。
+        const model = payload.model.trim();
+        updates.AI_MODEL = model.includes("/") ? model : `deepseek/${model}`;
+      }
+      if (typeof payload.apiKey === "string" && payload.apiKey.trim() && !payload.apiKey.includes("…")) updates.AI_API_KEY = payload.apiKey.trim();
+      await setEnvVars(path.join(projectDir, ".env"), updates);
+      return json(res, 200, { saved: true });
+    }
+    if (req.method === "POST" && url.pathname === "/api/local-admin/deepseek/verify") {
+      const payload = await body(req);
+      const envValues = await readEnvFile(path.join(projectDir, ".env"));
+      const typedKey = typeof payload.apiKey === "string" && payload.apiKey.trim() && !payload.apiKey.includes("…")
+        ? payload.apiKey.trim()
+        : "";
+      // 输入框里新填的 Key 优先验证；留空则验证已保存的 Key。
+      const key = typedKey || process.env.AI_API_KEY || envValues.AI_API_KEY || "";
+      if (!key) return json(res, 200, { ok: false, error: "请先输入 API Key" });
+      const base = (process.env.AI_API_BASE || envValues.AI_API_BASE || "https://api.deepseek.com").replace(/\/+$/, "");
+      const model = typeof payload.model === "string" ? payload.model.trim().replace(/^deepseek\//, "") : "";
+      try {
+        // 模型列表接口只校验凭证，不消耗 token。
+        const response = await fetch(`${base}/models`, {
+          headers: { authorization: `Bearer ${key}` },
+          signal: AbortSignal.timeout(12000),
+        });
+        if (response.status === 401 || response.status === 403) return json(res, 200, { ok: false, error: "API Key 无效或已被拒绝" });
+        if (!response.ok) return json(res, 200, { ok: false, error: `验证失败（HTTP ${response.status}）` });
+        const data = await response.json().catch(() => ({}));
+        const models = Array.isArray(data?.data)
+          ? data.data.map((item) => item?.id).filter((id) => typeof id === "string")
+          : [];
+        const modelMissing = Boolean(model && models.length && !models.includes(model));
+        return json(res, 200, { ok: true, model: model || undefined, models, modelMissing });
+      } catch (error) {
+        const text = error?.name === "TimeoutError"
+          ? "验证超时，请检查网络后重试"
+          : "无法连接 AI 服务，请检查网络或 API 地址";
+        return json(res, 200, { ok: false, error: text });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/api/local-admin/interests/suggest") {
       const payload = await body(req);
-      const output = await new Promise((resolve, reject) => {
-        const command = process.env.TREND_RADAR_PYTHON || process.env.TREND_RADAR_UV_BIN || "uv";
-        const args = process.env.TREND_RADAR_PYTHON
-          ? ["web/scripts/suggest_interests.py"]
-          : ["run", "python", "web/scripts/suggest_interests.py"];
-        const child = spawn(command, args, { cwd: projectDir, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (chunk) => { stdout += chunk; });
-        child.stderr.on("data", (chunk) => { stderr += chunk; });
-        child.on("error", reject);
-        child.on("exit", (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr.trim() || `LLM 配置助手失败（${code}）`)));
-        child.stdin.end(JSON.stringify({ instruction: payload.instruction, current: payload.current }));
-      });
+      const output = await runPythonScript("web/scripts/suggest_interests.py", [], { messages: payload.messages, current: payload.current });
       return json(res, 200, JSON.parse(output));
     }
     if (req.method === "POST" && url.pathname.startsWith("/api/local-admin/actions/")) {
@@ -227,7 +316,7 @@ const server = http.createServer(async (req, res) => {
       if (!["deploy", "export", "run"].includes(kind)) return json(res, 404, { error: "未知操作" });
       const payload = await body(req);
       if (kind === "run" && payload.confirm !== "RUN_AND_MAY_PUSH") return json(res, 400, { error: "立即运行可能发送飞书消息，需要明确确认" });
-      return json(res, 202, startJob(kind));
+      return json(res, 202, startJob(kind, { skipNotification: payload.skipNotification === true }));
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/local-admin/jobs/")) {
       const job = jobs.get(url.pathname.split("/").pop());

@@ -140,6 +140,8 @@ type AdminJob = {
   log: string;
   error?: string;
 };
+type StatusReport = { kind: "ok" | "error" | "loading"; text: string };
+type Readiness = { interestsValid: boolean; apiKeySet: boolean };
 type PlaybackSelection = {
   frame: Pick<PlaybackFrame, "id" | "start" | "end" | "label">;
   focus?: PlaybackNode["focus"];
@@ -177,7 +179,7 @@ const changeNames: Record<string, string> = {
   market_impact: "市场影响",
   rumor: "传闻",
   response: "回应",
-  incident: "事件",
+  incident: "突发",
   analysis: "分析",
   other: "新线索",
 };
@@ -279,14 +281,14 @@ function buildInterestDiff(before: string, after: string): InterestDiffLine[] {
   return diff;
 }
 function heatLabel(entity: Entity) {
-  if (entity.heatTrend === "rising") return entity.heatStreak > 1 ? `连续 ${entity.heatStreak} 日上升` : "热度上升";
-  if (entity.heatTrend === "falling") return entity.heatStreak > 1 ? `连续 ${entity.heatStreak} 日下降` : "热度下降";
-  return "热度持平";
+  if (entity.heatTrend === "rising") return entity.heatStreak > 1 ? `连续 ${entity.heatStreak} 日上升` : "关注度上升";
+  if (entity.heatTrend === "falling") return entity.heatStreak > 1 ? `连续 ${entity.heatStreak} 日下降` : "关注度下降";
+  return "关注度持平";
 }
 
 function MiniTrend({ points, color }: { points: StrengthPoint[]; color: string }) {
   const max = Math.max(...points.map((point) => point.strength), 1);
-  return <div className="entity-mini-trend" aria-label="实体九天活跃度">
+  return <div className="entity-mini-trend" aria-label="节点九天活跃度">
     {points.map((point) => <i key={point.date} title={`${point.date} · ${point.strength}`} style={{ height: `${Math.max(7, point.strength / max * 100)}%`, background: color }} />)}
   </div>;
 }
@@ -295,14 +297,14 @@ function EntityCard({ entity, onSelect }: { entity: Entity; onSelect: (entity: E
   const delta = entity.momentum > 0 ? `+${entity.momentum}` : `${entity.momentum}`;
   return <button className="entity-card" onClick={() => onSelect(entity)} type="button">
     <div className="entity-card-head">
-      <span className="entity-type"><i style={{ background: entity.color }} />{typeNames[entity.type] ?? "实体"}</span>
+      <span className="entity-type"><i style={{ background: entity.color }} />{typeNames[entity.type] ?? "节点"}</span>
       <span className={`entity-velocity ${entity.heatTrend === "rising" ? "up" : entity.heatTrend === "falling" ? "down" : "flat"}`}>{heatLabel(entity)}</span>
     </div>
     <div className="entity-name-row"><h3>{entity.name}</h3><strong className={entity.momentum >= 0 ? "positive" : "negative"}>{delta}</strong></div>
-    <p>{entity.timeline[0]?.name ?? "当前没有识别到新的具体事件"}</p>
+    <p>{entity.timeline[0]?.name ?? "当前没有识别到新的具体进展"}</p>
     <div className="entity-speed-row">
-      <span className="event-speed"><i />事件变化 <b>{entity.eventChanges3h}</b><small>/3h</small></span>
-      <span className="spread-speed"><i />媒体扩散 <b>{entity.spread3h}</b><small>源/3h</small></span>
+      <span className="event-speed"><i />新增进展 <b>{entity.eventChanges3h}</b><small>/3h</small></span>
+      <span className="spread-speed"><i />来源扩散 <b>{entity.spread3h}</b><small>源/3h</small></span>
     </div>
     <div className="entity-strength-row"><span>昨日同期 {entity.previousStrength}</span><i><em style={{ width: `${entity.previousStrength}%` }} /><b style={{ width: `${entity.strength}%`, background: entity.color }} /></i><span>现在 {entity.strength}</span></div>
     <div className="entity-card-foot">
@@ -479,7 +481,7 @@ function EntityGraph({ entities, edges, layoutEdges = edges, onSelect, onStepFra
   }, [draw, entities, showHeatMotion]);
   function hitAt(canvas: HTMLCanvasElement, clientX: number, clientY: number) { const rect = canvas.getBoundingClientRect(); const x = clientX - rect.left, y = clientY - rect.top; return [...nodesRef.current].reverse().find((node) => node.playbackSeen !== false && Math.hypot(node.x - x, node.y - y) <= node.r + 10) ?? null; }
   return <div className="entity-graph-wrap">
-    <canvas ref={canvasRef} tabIndex={onStepFrame ? 0 : undefined} aria-label={`实体关系图：节点可拖拽；大小表示热度，黄色实线外环表示事件变化速度，蓝色虚线外环表示媒体扩散速度${onStepFrame ? "；点选图谱后可用左右方向键切换相邻时间帧" : ""}`}
+    <canvas ref={canvasRef} tabIndex={onStepFrame ? 0 : undefined} aria-label={`节点图谱：可拖拽；大小表示关注度，黄色实线外环表示进展更新速度，蓝色虚线外环表示来源扩散速度${onStepFrame ? "；点选图谱后可用左右方向键切换相邻时间片" : ""}`}
       onKeyDown={(event) => {
         if (!onStepFrame || event.altKey || event.ctrlKey || event.metaKey) return;
         const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
@@ -494,14 +496,14 @@ function EntityGraph({ entities, edges, layoutEdges = edges, onSelect, onStepFra
       onPointerLeave={() => { if (dragRef.current) return; hoveredRef.current = null; setHovered(null); draw(); }}
       onClick={(event) => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } const node = hitAt(event.currentTarget, event.clientX, event.clientY); if (node) onSelect(node); }} />
     <div className="entity-graph-legend" aria-label="图谱指标与计算口径">
-      <GraphLegendItem icon="legend-size" label="热度" help="节点大小。使用过去 24 小时滚动强度，由去重标题数、独立来源数、榜单位置和 AI 相关度共同计算。" />
-      {showHeatMotion && <><GraphLegendItem icon="legend-previous" label="上帧大小" help="灰色虚线保留前一个 3 小时帧的节点大小，用来直接比较热度变化。" /><GraphLegendItem icon="legend-heat-change" label="热度升降" help="绿色 ↑ 表示较上一帧增强，红色 ↓ 表示减弱；旁边的数字是热度差值。" /></>}
-      <GraphLegendItem icon="legend-event" label="新事实" help="当前 3 小时内语义去重后的具体事件数量。媒体重复报道同一件事不会重复增加。" />
-      <GraphLegendItem icon="legend-spread" label="新增媒体" help="当前 3 小时内首次加入该实体报道的独立来源数量，同一来源多篇只计算一次。" />
+      <GraphLegendItem icon="legend-size" label="关注度" help="节点大小。使用过去 24 小时滚动关注度，由去重标题数、独立来源数、榜单位置和 AI 相关度共同计算。" />
+      {showHeatMotion && <><GraphLegendItem icon="legend-previous" label="上一时间片大小" help="灰色虚线保留前一个 3 小时时间片的节点大小，用来直接比较关注度变化。" /><GraphLegendItem icon="legend-heat-change" label="关注度升降" help="绿色 ↑ 表示较上一时间片增强，红色 ↓ 表示减弱；旁边的数字是关注度差值。" /></>}
+      <GraphLegendItem icon="legend-event" label="新增进展" help="当前 3 小时内语义去重后的具体进展数量。媒体重复报道同一件事不会重复增加。" />
+      <GraphLegendItem icon="legend-spread" label="新增来源" help="当前 3 小时内首次加入该节点报道的独立来源数量，同一来源多篇只计算一次。" />
       <GraphLegendItem icon="legend-time" label="时间" help="优先使用新闻发布时间；原文没有发布时间时，才回退到 TrendRadar 首次采集时间。" />
       <span className="graph-drag-hint">{onStepFrame ? "拖拽节点调整位置 · 点选图谱后 ← → 切换时间" : "拖拽节点调整位置"}</span>
     </div>
-    {hovered && <div className="entity-graph-tip"><i style={{ background: hovered.color }} /><div><strong>{hovered.name}</strong><span>{showHeatMotion ? `热度 ${hovered.previousStrength} → ${hovered.strength}（${signed(hovered.momentum)}）` : `热度 ${hovered.strength}（${signed(hovered.momentum)}）`} · 新事实 {hovered.eventChanges3h} · 新增媒体 {hovered.spread3h}</span></div></div>}
+    {hovered && <div className="entity-graph-tip"><i style={{ background: hovered.color }} /><div><strong>{hovered.name}</strong><span>{showHeatMotion ? `关注度 ${hovered.previousStrength} → ${hovered.strength}（${signed(hovered.momentum)}）` : `关注度 ${hovered.strength}（${signed(hovered.momentum)}）`} · 新增进展 {hovered.eventChanges3h} · 新增来源 {hovered.spread3h}</span></div></div>}
   </div>;
 }
 
@@ -558,7 +560,7 @@ function PlaybackGraph({ entities, frames, layoutEdges, onSelect }: { entities: 
     });
   }, [entities, frame, frameIndex, playbackFrames]);
 
-  if (!frame) return <p>暂无可播放的时间帧。</p>;
+  if (!frame) return <p>暂无可播放的时间片。</p>;
   const visibleIds = new Set(entities.map((entity) => entity.id));
   const visibleNodes = frame.nodes.filter((node) => visibleIds.has(node.id));
   const activeEntities = visibleNodes.filter((node) => node.seen && node.strength > 0).length;
@@ -585,15 +587,15 @@ function PlaybackGraph({ entities, frames, layoutEdges, onSelect }: { entities: 
 
   return <section className="graph-player" aria-label="三小时时间播放器">
     <div className="graph-date-range">
-      <div><span>播放日期区间</span><strong>选择范围后，只播放范围内的 3 小时帧</strong></div>
+      <div><span>播放日期区间</span><strong>选择范围后，只播放范围内的 3 小时时间片</strong></div>
       <label><span>开始日期</span><input type="date" min={availableStart} max={rangeEnd || availableEnd} value={rangeStart} onChange={(event) => updateRange(event.target.value, event.target.value > rangeEnd ? event.target.value : rangeEnd)} /></label>
       <i>—</i>
       <label><span>结束日期</span><input type="date" min={rangeStart || availableStart} max={availableEnd} value={rangeEnd} onChange={(event) => updateRange(event.target.value < rangeStart ? event.target.value : rangeStart, event.target.value)} /></label>
       <button type="button" onClick={() => updateRange(availableStart, availableEnd)}>全部日期</button>
     </div>
     <div className="graph-player-status">
-      <div><span className="graph-player-kicker">当前时间帧 · {frameIndex + 1}/{playbackFrames.length}</span><strong>{frame.label}</strong><small>{rangeStart} 至 {rangeEnd} · 共 {playbackFrames.length} 帧 · {frame.sparse ? "本帧数据较稀疏" : `${frame.storyCount} 条线索 · ${frame.sourceCount} 个来源`} · {frame.publishedCount} 条发布时间 · {frame.observedFallbackCount} 条观测时间</small></div>
-      <div className="graph-frame-metrics"><span><b>{activeEntities}</b> 活跃实体</span><span><b>{newFacts}</b> 新事实</span><span><b>{newMedia}</b> 新增媒体</span></div>
+      <div><span className="graph-player-kicker">当前时间片 · {frameIndex + 1}/{playbackFrames.length}</span><strong>{frame.label}</strong><small>{rangeStart} 至 {rangeEnd} · 共 {playbackFrames.length} 个时间片 · {frame.sparse ? "本时间片数据较稀疏" : `${frame.storyCount} 条线索 · ${frame.sourceCount} 个来源`} · {frame.publishedCount} 条发布时间 · {frame.observedFallbackCount} 条观测时间</small></div>
+      <div className="graph-frame-metrics"><span><b>{activeEntities}</b> 活跃节点</span><span><b>{newFacts}</b> 新增进展</span><span><b>{newMedia}</b> 新增来源</span></div>
     </div>
     <EntityGraph entities={frameEntities} edges={frame.edges} layoutEdges={layoutEdges} onStepFrame={stepFrame} onSelect={(entity) => {
       onSelect(entity, {
@@ -605,9 +607,9 @@ function PlaybackGraph({ entities, frames, layoutEdges, onSelect }: { entities: 
       <button type="button" onClick={() => stepFrame(-1)} aria-label="上一个三小时">‹</button>
       <button className="player-toggle" type="button" onClick={togglePlayback}>{playing ? "暂停" : frameIndex >= playbackFrames.length - 1 ? "从区间起点播放" : "播放"}</button>
       <button type="button" onClick={() => stepFrame(1)} aria-label="下一个三小时">›</button>
-      <label className="graph-scrubber"><span className="sr-only">选择三小时时间帧</span><input type="range" min="0" max={Math.max(0, playbackFrames.length - 1)} value={frameIndex} onChange={(event) => setFrameIndex(Number(event.target.value))} /></label>
+      <label className="graph-scrubber"><span className="sr-only">选择三小时时间片</span><input type="range" min="0" max={Math.max(0, playbackFrames.length - 1)} value={frameIndex} onChange={(event) => setFrameIndex(Number(event.target.value))} /></label>
       <label className="graph-speed"><span>速度</span><select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option></select></label>
-      <label className="graph-color-toggle"><input type="checkbox" checked={colorByType} onChange={(event) => setColorByType(event.target.checked)} /><i /><span>按实体类型着色</span></label>
+      <label className="graph-color-toggle"><input type="checkbox" checked={colorByType} onChange={(event) => setColorByType(event.target.checked)} /><i /><span>按节点类型着色</span></label>
     </div>
   </section>;
 }
@@ -618,28 +620,336 @@ function HeatTrend({ entity }: { entity: Entity }) {
   const latest = points[points.length - 1]?.strength ?? 0;
   const peak = Math.max(...points.map((point) => point.strength), 0);
   return <section className="entity-detail-section entity-heat-section">
-    <div className="entity-section-title"><div><h3>热度变化</h3><small>按天展示最近 {points.length} 天强度</small></div><span>当前 {latest}</span></div>
-    <div className="entity-heat-summary"><span><b>{latest}</b> 当前热度</span><span><b>{peak}</b> 区间峰值</span></div>
-    <div className="entity-heat-chart" role="img" aria-label={`${entity.name} 最近 ${points.length} 天热度变化，当前 ${latest}，区间峰值 ${peak}`}>
+    <div className="entity-section-title"><div><h3>关注度变化</h3><small>按天展示最近 {points.length} 天关注度</small></div><span>当前 {latest}</span></div>
+    <div className="entity-heat-summary"><span><b>{latest}</b> 当前关注度</span><span><b>{peak}</b> 区间峰值</span></div>
+    <div className="entity-heat-chart" role="img" aria-label={`${entity.name} 最近 ${points.length} 天关注度变化，当前 ${latest}，区间峰值 ${peak}`}>
       {points.map((point) => <div className="entity-heat-column" key={point.date}><strong>{point.strength}</strong><div><i style={{ height: `${point.strength > 0 ? Math.max(8, point.strength / max * 100) : 2}%`, background: entity.color }} /></div><time>{shortDate(point.date)}</time></div>)}
     </div>
   </section>;
 }
 
-function InterestSettings() {
-  const [token, setToken] = useState(() => typeof window === "undefined" ? "" : sessionStorage.getItem("trendradar-admin-token") || "");
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+
+type SavePhase = "saving" | "deploying" | "done" | "error";
+type SaveState = { phase: SavePhase; percent: number; label: string } | null;
+
+function useSaveProgress() {
+  const [state, setState] = useState<SaveState>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const begin = useCallback(() => {
+    setElapsed(0);
+    setState({ phase: "saving", percent: 8, label: "正在保存配置…" });
+  }, []);
+  const stage = useCallback((label = "正在同步到运行副本…") => {
+    setState({ phase: "deploying", percent: 40, label });
+  }, []);
+  const finish = useCallback((label = "已保存并生效") => {
+    setState({ phase: "done", percent: 100, label });
+  }, []);
+  const fail = useCallback((label: string) => {
+    setState((current) => ({ phase: "error", percent: current?.percent ?? 8, label }));
+  }, []);
+  const reset = useCallback(() => setState(null), []);
+
+  // 部署/采集阶段没有真实百分比：条子推进后停住，同时按秒计时，避免像卡死。
+  useEffect(() => {
+    if (state?.phase !== "deploying") return;
+    const raf = window.requestAnimationFrame(() => {
+      setState((current) => current && current.phase === "deploying" ? { ...current, percent: 90 } : current);
+    });
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000);
+    return () => { window.cancelAnimationFrame(raf); window.clearInterval(timer); };
+  }, [state?.phase]);
+
+  // 成功态只短暂停留，避免进度条一直占着页脚。
+  useEffect(() => {
+    if (state?.phase !== "done") return;
+    const timer = window.setTimeout(() => setState(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [state?.phase]);
+
+  return { state, elapsed, begin, stage, finish, fail, reset };
+}
+
+function SaveProgressBar({ state, elapsed }: { state: SaveState; elapsed: number }) {
+  if (!state) return null;
+  const counting = state.phase === "deploying";
+  const label = counting ? `${state.label} ${elapsed}s` : state.label;
+  return <div className="save-progress" data-phase={state.phase} role="status" aria-live="polite">
+    <div className="save-progress-track"><i style={{ width: `${state.percent}%` }} /></div>
+    <span className="save-progress-label">{label}</span>
+  </div>;
+}
+
+const INTEREST_TEMPLATE = `感兴趣的：
+- 英伟达（NVIDIA / NVDA）、AMD 的财报、新芯片与供应链消息
+- AI 大模型的发布、融资、开源与商业化进展
+- AI 算力、数据中心和电力配套的变化
+
+必须抓取的：
+- 英伟达、AMD 发布新芯片、财报或重大合作
+- 美国对华 AI 芯片出口限制、关税与监管政策
+- 黄仁勋、苏姿丰的重要公开表态
+
+不感兴趣的：
+- 广告、招聘、抽奖、促销和标题党
+- 只有行情数字、没有具体事件的播报
+- 与科技和半导体无关的娱乐八卦
+`;
+
+function buildInterestPrompt(current: string) {
+  const existing = current.trim();
+  return [
+    "你是一个新闻情报配置助手。请帮我写一份 user_interests.txt，用来告诉新闻采集系统：我关注什么、什么必须抓到、什么不要。",
+    "",
+    "请这样工作：",
+    "1. 先用 3-5 个简短问题了解我关注的行业、公司、人物、事件，以及我不想看到的内容。一次只问一个问题，等我回答后再问下一个。",
+    "2. 问完后直接输出完整文档，不要解释，不要寒暄。",
+    "",
+    "文档必须只包含以下三个段落，段落名一字不差，使用纯文本，不要 Markdown 表格：",
+    "",
+    "感兴趣的：",
+    "- 每个主题写一行，带上具体的公司、产品、人物或事件名；写 5-12 条",
+    "",
+    "必须抓取的：",
+    "- 写“一旦发生就必须提醒我”的具体事件；写 3-8 条",
+    "",
+    "不感兴趣的：",
+    "- 写明确排除的内容；写 2-6 条",
+    "",
+    "写作要求：",
+    "- 每行只写一件事，尽量具体，例如“英伟达、AMD 的新芯片与财报”，不要写“科技新闻”。",
+    "- 不要输出标题、日期、编号、解释、前言或结语。",
+    "- 把最终文档放进一个代码块，方便我整体复制。",
+  ].join("\n") + (existing ? `\n\n我当前已保存的内容如下，请在此基础上调整，保留仍然有效的部分：\n\n${existing}` : "");
+}
+
+function InterestSettings({ request, onReport, notify, onCleared }: { request: (path: string, init?: RequestInit) => Promise<any>; onReport: (text: string, kind?: StatusReport["kind"]) => void; notify: (text: string) => void; onCleared: () => void }) {
+  const [confirmClear, setConfirmClear] = useState(false);
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
-  const [instruction, setInstruction] = useState("");
   const [updatedAt, setUpdatedAt] = useState("");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [templateUndo, setTemplateUndo] = useState<string | null>(null);
   const [job, setJob] = useState<AdminJob | null>(null);
+  const copyTimer = useRef<number | null>(null);
+  const { state: saveState, elapsed: saveElapsed, begin: beginSave, stage: stageSave, finish: finishSave, fail: failSave, reset: resetSave } = useSaveProgress();
   const interestDiff = useMemo(() => buildInterestDiff(savedContent, content), [content, savedContent]);
   const hasInterestChanges = normalizedInterestText(content) !== normalizedInterestText(savedContent);
   const addedInterestLines = interestDiff.filter((line) => line.kind === "add").length;
   const removedInterestLines = interestDiff.filter((line) => line.kind === "remove").length;
+
+  const load = useCallback(async () => {
+    setBusy("load");
+    setMessage("");
+    try {
+      const value = await request("/interests");
+      setContent(value.content);
+      setSavedContent(value.content);
+      setUpdatedAt(value.updatedAt);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally { setBusy(""); }
+  }, [request]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(load, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => () => {
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!job || job.status !== "running") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const value = await request(`/jobs/${job.id}`);
+        setJob(value);
+        if (value.status === "completed") {
+          // 保存只写规则并做配置校验；采集由定时任务负责，下一轮才会用新规则。
+          onReport("规则已保存，下一轮采集生效。", "ok");
+          setMessage("已保存；下一轮采集会按新规则筛选");
+          notify("规则已保存，下一轮采集生效");
+          finishSave("已保存");
+          void load();
+        } else if (value.status === "failed") {
+          onReport(`生效失败：${value.error || "任务失败"}`, "error");
+          setMessage(value.error || "任务失败");
+          notify(`生效失败：${value.error || "任务失败"}`);
+          failSave(`生效失败：${value.error || "任务失败"}`);
+        }
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        onReport(`生效失败：${text}`, "error");
+        setMessage(text);
+        notify(`生效失败：${text}`);
+        failSave(`生效失败：${text}`);
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [job, request, onReport, notify, finishSave, failSave, load]);
+
+  // 成功提示只在内容仍然已同步时保留；再次编辑就复位进度条。
+  useEffect(() => {
+    if (saveState?.phase === "done" && hasInterestChanges) resetSave();
+  }, [saveState?.phase, hasInterestChanges, resetSave]);
+
+  async function copyPrompt() {
+    const text = buildInterestPrompt(content.trim() ? content : savedContent);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 非安全上下文没有 Clipboard API 时退回隐藏 textarea + execCommand。
+      try {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        area.remove();
+        if (!ok) throw new Error("execCommand 复制失败");
+      } catch {
+        notify("复制失败，请手动选中提示词复制");
+        return;
+      }
+    }
+    setCopied(true);
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(false), 2400);
+    notify("提示词已复制，去 AI 工具里粘贴即可");
+  }
+
+  function fillTemplate() {
+    // 重复点“填入模板”时保留第一次的原文，避免撤销入口被覆盖掉。
+    setTemplateUndo((current) => content && content !== INTEREST_TEMPLATE ? content : current);
+    setContent(INTEREST_TEMPLATE);
+  }
+
+  async function save() {
+    setBusy("save");
+    setMessage("");
+    notify("正在保存配置…");
+    beginSave();
+    try {
+      await request("/interests", { method: "POST", body: JSON.stringify({ content }) });
+      setSavedContent(content.endsWith("\n") ? content : `${content}\n`);
+      setTemplateUndo(null);
+      onReport("正在同步配置到运行副本…", "loading");
+      stageSave();
+      const value = await request("/actions/deploy", { method: "POST", body: JSON.stringify({}) });
+      setJob(value);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      onReport(`保存失败：${text}`, "error");
+      setMessage(text);
+      notify(`保存失败：${text}`);
+      failSave(`保存失败：${text}`);
+    } finally { setBusy(""); }
+  }
+
+  async function clearInterests() {
+    setConfirmClear(false);
+    setBusy("clear");
+    setMessage("");
+    try {
+      await request("/interests", { method: "DELETE" });
+      setContent("");
+      setSavedContent("");
+      setUpdatedAt("");
+      setTemplateUndo(null);
+      onReport("兴趣设置已清空；配置新的规则后才能开始采集。", "ok");
+      // 清空后立刻把页面切回「先完成配置」：由上层重新读取 readiness 并关闭设置弹窗。
+      onCleared();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      onReport(`清空失败：${text}`, "error");
+      setMessage(text);
+      notify(`清空失败：${text}`);
+    } finally { setBusy(""); }
+  }
+
+  return <div className="settings-section interest-settings">
+    <div className="settings-scroll">
+      <div className="settings-section-head"><h2>兴趣设置</h2><span className="kicker">先让 AI 帮你写清楚，再粘贴回来保存</span></div>
+      <ol className="interest-steps" aria-label="使用步骤">
+        <li><b>01</b><span>点左下角「复制提示词到 AI 工具」。</span></li>
+        <li><b>02</b><span>粘贴到任意 AI 工具，按它的提问补充你的兴趣；AI 会生成一份完整文档。</span></li>
+        <li><b>03</b><span>把文档粘贴到右侧输入框。下方会预览「上次保存」与「本次内容」的差异，确认后保存。</span></li>
+      </ol>
+      <div className="interest-layout">
+        <section className="interest-template" aria-label="兴趣配置模板">
+          <div className="interest-panel-head">
+            <div><span>模板 · 示例</span><strong>三段式：感兴趣 / 必须抓取 / 不感兴趣</strong></div>
+            <button type="button" className="template-fill" onClick={fillTemplate} disabled={Boolean(busy) || job?.status === "running"}>填入模板</button>
+          </div>
+          <pre>{INTEREST_TEMPLATE}</pre>
+          {templateUndo !== null && <button type="button" className="template-undo" onClick={() => { setContent(templateUndo); setTemplateUndo(null); }}>撤销填入，恢复之前的内容</button>}
+        </section>
+        <section className="interest-editor">
+          <div className="interest-panel-head"><div><span>user_interests.txt</span><strong>把 AI 生成的文档粘贴到这里</strong></div><i className={hasInterestChanges ? "dirty" : ""}>{hasInterestChanges ? "未保存" : "已同步"}</i></div>
+          <textarea aria-label="兴趣配置文件" value={content} onChange={(event) => setContent(event.target.value)} placeholder={"把 AI 生成的文档粘贴到这里…\n\n还没有内容？可以先点左侧「填入模板」，或左下角「复制提示词到 AI 工具」。"} spellCheck={false} disabled={busy === "load"} />
+          {hasInterestChanges && <section className="interest-diff" aria-label="上次保存与本次内容差异">
+            <div className="interest-diff-head"><div><span>上次保存</span><b>→</b><span>本次内容</span></div><p><strong>+{addedInterestLines}</strong> 新增 · <em>−{removedInterestLines}</em> 删除</p></div>
+            <div className="interest-diff-body">{interestDiff.map((line, index) => <div className={`interest-diff-line ${line.kind}`} key={`${line.kind}-${line.beforeLine}-${line.afterLine}-${index}`}>
+              <span>{line.beforeLine ?? ""}</span><span>{line.afterLine ?? ""}</span><b>{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : " "}</b><code>{line.text || " "}</code>
+            </div>)}</div>
+          </section>}
+          <div className="interest-file-meta"><span>config/custom/ai/user_interests.txt</span><time>{updatedAt ? `更新于 ${new Date(updatedAt).toLocaleString("zh-CN")}` : "尚未创建"}</time></div>
+        </section>
+      </div>
+      {message && <p className="admin-message">{message}</p>}
+    </div>
+    <SaveProgressBar state={saveState} elapsed={saveElapsed} />
+    <p className="interest-save-hint">保存只写入规则，不触发采集；下一轮定时采集会按新规则筛选。</p>
+    <div className="settings-actions interest-actions-bar">
+      <button type="button" className="copy-prompt" onClick={copyPrompt}>{copied ? "已复制 ✓" : "复制提示词到 AI 工具"}</button>
+      <button className="danger" onClick={() => setConfirmClear(true)} disabled={Boolean(busy) || (!content && !savedContent)}>清空兴趣设置</button>
+      <button className="save-button" onClick={save} disabled={Boolean(busy) || !content || !hasInterestChanges || job?.status === "running"}>{busy === "save" ? "保存中…" : "保存"}</button>
+    </div>
+    {confirmClear && <div className="confirm-backdrop" role="presentation" onClick={() => setConfirmClear(false)}>
+      <div className="confirm-dialog" role="dialog" aria-modal="true" aria-label="确认清空兴趣设置" onClick={(event) => event.stopPropagation()}>
+        <span className="kicker">清空兴趣设置</span>
+        <h3>确定清空全部兴趣规则吗？</h3>
+        <p>清空后需要重新配置兴趣设置，才能开始采集与分析。</p>
+        <div className="settings-actions">
+          <button onClick={() => setConfirmClear(false)}>取消</button>
+          <button className="danger" onClick={clearInterests} disabled={busy === "clear"}>{busy === "clear" ? "正在清空…" : "确认清空"}</button>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+type SettingsSection = "rss" | "interests";
+
+type RssPlatformConfig = {
+  platforms: { enabled: boolean; sources: { id: string; name: string; enabled: boolean }[] };
+  rss: { enabled: boolean; feeds: { id: string; name: string; url: string; enabled: boolean }[] };
+};
+
+function SettingsPanel({ onClose, onReport, onInterestsCleared }: { onClose: () => void; onReport: (text: string, kind?: StatusReport["kind"]) => void; onInterestsCleared: () => void }) {
+  const [token, setToken] = useState(() => typeof window === "undefined" ? "" : sessionStorage.getItem("trendradar-admin-token") || "");
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [section, setSection] = useState<SettingsSection>("rss");
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [toast, setToast] = useState("");
+  const toastTimer = useRef<number | null>(null);
+
+  const notify = useCallback((text: string) => {
+    setToast(text);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 4000);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+  }, []);
 
   const request = useCallback(async (path: string, init: RequestInit = {}, suppliedToken = token) => {
     const headers = new Headers(init.headers);
@@ -655,14 +965,9 @@ function InterestSettings() {
     setBusy("load");
     setMessage("");
     try {
-      const status = await request("/status", {}, suppliedToken);
-      setAuthenticated(Boolean(status.authenticated));
-      if (!status.authenticated) return;
-      const value = await request("/interests", {}, suppliedToken);
-      setContent(value.content);
-      setSavedContent(value.content);
-      setUpdatedAt(value.updatedAt);
-      if (suppliedToken) sessionStorage.setItem("trendradar-admin-token", suppliedToken);
+      const statusValue = await request("/status", {}, suppliedToken);
+      setAuthenticated(Boolean(statusValue.authenticated));
+      if (suppliedToken && statusValue.authenticated) sessionStorage.setItem("trendradar-admin-token", suppliedToken);
     } catch (error) {
       setAuthenticated(false);
       setMessage(error instanceof Error ? error.message : String(error));
@@ -674,6 +979,48 @@ function InterestSettings() {
     return () => window.clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  return <div className="settings-backdrop" role="presentation" onClick={onClose}>
+    <div className="settings-popup" role="dialog" aria-modal="true" aria-label="设置" onClick={(event) => event.stopPropagation()}>
+      {authenticated === false
+        ? <div className="settings-unlock"><span className="kicker">本地配置保护</span><h2>输入管理口令</h2><p>本机 localhost 访问不需要口令；外部预览写入需要口令。</p><input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="TrendRadar Web Admin Token" /><button onClick={() => load(token)} disabled={!token || busy === "load"}>{busy === "load" ? "验证中…" : "进入设置"}</button>{message && <p className="admin-message error">{message}</p>}</div>
+        : <>
+            <aside className="settings-menu">
+              <span className="kicker">设置</span>
+              <button className={section === "rss" ? "active" : ""} onClick={() => setSection("rss")}><span>◫</span>RSS 与热榜</button>
+              <button className={section === "interests" ? "active" : ""} onClick={() => setSection("interests")}><span>✦</span>兴趣设置</button>
+            </aside>
+            <section className="settings-body">
+              {section === "rss" ? <RssPlatformSettings request={request} onReport={onReport} notify={notify} /> : <InterestSettings request={request} onReport={onReport} notify={notify} onCleared={onInterestsCleared} />}
+            </section>
+            <button className="settings-close" onClick={onClose} aria-label="关闭设置">×</button>
+          </>}
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </div>
+  </div>;
+}
+
+function RssPlatformSettings({ request, onReport, notify }: { request: (path: string, init?: RequestInit) => Promise<any>; onReport: (text: string, kind?: StatusReport["kind"]) => void; notify: (text: string) => void }) {
+  const [config, setConfig] = useState<RssPlatformConfig | null>(null);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+  const [job, setJob] = useState<AdminJob | null>(null);
+  const { state: saveState, elapsed: saveElapsed, begin: beginSave, stage: stageSave, finish: finishSave, fail: failSave, reset: resetSave } = useSaveProgress();
+
+  const load = useCallback(async () => {
+    setBusy("load");
+    setMessage("");
+    try {
+      setConfig(await request("/config"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally { setBusy(""); }
+  }, [request]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(load, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
   useEffect(() => {
     if (!job || job.status !== "running") return;
     const timer = window.setInterval(async () => {
@@ -681,77 +1028,85 @@ function InterestSettings() {
         const value = await request(`/jobs/${job.id}`);
         setJob(value);
         if (value.status === "completed") {
-          setMessage(value.kind === "deploy" ? "检查通过，配置已同步到运行副本；下一轮定时采集会读取新规则。" : "立即采集完成，实体雷达快照已更新。");
-          if (value.kind === "run") window.setTimeout(() => window.location.reload(), 2200);
+          onReport("配置已生效；下一轮定时采集会读取新配置。", "ok");
+          setMessage("已生效");
+          notify("已保存，下一轮定时采集读取新配置");
+          finishSave("已保存并生效");
+        } else if (value.status === "failed") {
+          onReport(`生效失败：${value.error || "任务失败"}`, "error");
+          setMessage(value.error || "任务失败");
+          notify(`生效失败：${value.error || "任务失败"}`);
+          failSave(`生效失败：${value.error || "任务失败"}`);
         }
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : String(error));
+        const text = error instanceof Error ? error.message : String(error);
+        onReport(`生效失败：${text}`, "error");
+        setMessage(text);
+        notify(`生效失败：${text}`);
+        failSave(`生效失败：${text}`);
       }
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [job, request]);
+  }, [job, request, onReport, notify, finishSave, failSave]);
 
-  async function save(showMessage = true) {
-    const value = await request("/interests", { method: "POST", body: JSON.stringify({ content }) });
-    setSavedContent(content.endsWith("\n") ? content : `${content}\n`);
-    setUpdatedAt(value.updatedAt);
-    if (showMessage) setMessage("草稿已保存到工作区；尚未同步到后台运行副本。");
+  function setPlatformEnabled(enabled: boolean) {
+    resetSave();
+    setConfig((current) => current ? { ...current, platforms: { ...current.platforms, enabled } } : current);
+  }
+  function setSourceEnabled(id: string, enabled: boolean) {
+    resetSave();
+    setConfig((current) => current ? { ...current, platforms: { ...current.platforms, sources: current.platforms.sources.map((s) => s.id === id ? { ...s, enabled } : s) } } : current);
+  }
+  function setRssEnabled(enabled: boolean) {
+    resetSave();
+    setConfig((current) => current ? { ...current, rss: { ...current.rss, enabled } } : current);
+  }
+  function setFeedEnabled(id: string, enabled: boolean) {
+    resetSave();
+    setConfig((current) => current ? { ...current, rss: { ...current.rss, feeds: current.rss.feeds.map((f) => f.id === id ? { ...f, enabled } : f) } } : current);
   }
 
-  async function suggest() {
-    if (!instruction.trim()) return;
-    setBusy("suggest");
+  async function save() {
+    if (!config) return;
+    setBusy("save");
     setMessage("");
+    notify("正在保存配置…");
+    beginSave();
     try {
-      const value = await request("/interests/suggest", { method: "POST", body: JSON.stringify({ instruction, current: content }) });
-      setContent(value.content);
-      setMessage(value.summary);
-      setInstruction("");
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(""); }
-  }
-
-  async function startAction(kind: AdminJob["kind"]) {
-    if (kind === "run" && !window.confirm("立即运行会调用 TrendRadar 原生采集流程，并可能按现有设置发送飞书消息。确认继续吗？")) return;
-    setBusy(kind);
-    setMessage("");
-    try {
-      if (content !== savedContent) await save(false);
-      const value = await request(`/actions/${kind}`, { method: "POST", body: JSON.stringify(kind === "run" ? { confirm: "RUN_AND_MAY_PUSH" } : {}) });
+      await request("/config", { method: "POST", body: JSON.stringify(config) });
+      onReport("正在同步配置到运行副本…", "loading");
+      stageSave();
+      const value = await request("/actions/deploy", { method: "POST", body: JSON.stringify({}) });
       setJob(value);
-      setMessage(kind === "deploy" ? "正在保存、检查并同步配置…" : "正在保存、检查、同步并立即采集…");
-    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
-    finally { setBusy(""); }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      onReport(`保存失败：${text}`, "error");
+      setMessage(text);
+      notify(`保存失败：${text}`);
+      failSave(`保存失败：${text}`);
+    } finally { setBusy(""); }
   }
 
-  if (authenticated === false) return <div className="content interest-page"><section className="admin-unlock"><span className="kicker">本地配置保护</span><h1>输入管理口令，<br />才能修改采集规则。</h1><p>外部预览可以查看图谱，但写入本机文件和启动任务需要管理口令。本机 localhost 访问不需要口令。</p><label><span>管理口令</span><input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="TrendRadar Web Admin Token" /></label><button onClick={() => load(token)} disabled={!token || busy === "load"}>{busy === "load" ? "验证中…" : "进入兴趣设置"}</button>{message && <p className="admin-message error">{message}</p>}</section></div>;
+  if (busy === "load" && !config) return <p className="settings-placeholder">正在读取配置…</p>;
+  if (!config) return <p className="settings-placeholder">{message || "无法读取配置"}</p>;
 
-  return <div className="content interest-page">
-    <div className="page-intro interest-intro"><div><span className="kicker">原生配置入口</span><h1>告诉 DeepSeek，<br />你现在想看什么。</h1></div><p>这里直接读写 TrendRadar 现有的兴趣文件。保存不会另建规则库；检查、同步和采集也全部调用开源项目原来的流程。</p></div>
-    <section className="interest-workbench">
-      <div className="interest-chat">
-        <div className="interest-panel-head"><div><span>LLM 配置助手</span><strong>用自然语言修改现有规则</strong></div><i>DEEPSEEK</i></div>
-        <div className="interest-conversation"><div className="assistant-bubble"><span>助手</span><p>你可以说：“增加对 Kimi 和月之暗面的关注，但排除只有观点、没有新事实的讨论。”我会保留其他规则，只生成一份待确认的完整草案。</p></div>{message && <div className="system-bubble"><span>状态</span><p>{message}</p></div>}</div>
-        <div className="interest-prompt"><textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="描述要增加、删除或调整的兴趣…" /><button onClick={suggest} disabled={!instruction.trim() || Boolean(busy) || Boolean(job?.status === "running")}>{busy === "suggest" ? "整理中…" : "生成修改草案"}</button></div>
-      </div>
-      <div className="interest-editor">
-        <div className="interest-panel-head"><div><span>user_interests.txt</span><strong>项目当前实际读取的配置</strong></div><i className={hasInterestChanges ? "dirty" : ""}>{hasInterestChanges ? "未保存" : "已同步编辑器"}</i></div>
-        <textarea aria-label="兴趣配置文件" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} disabled={authenticated === null} />
-        {hasInterestChanges && <section className="interest-diff" aria-label="兴趣配置修改前后对比">
-          <div className="interest-diff-head"><div><span>修改前</span><b>→</b><span>修改后</span></div><p><strong>+{addedInterestLines}</strong> 新增 · <em>−{removedInterestLines}</em> 删除</p></div>
-          <div className="interest-diff-body">{interestDiff.map((line, index) => <div className={`interest-diff-line ${line.kind}`} key={`${line.kind}-${line.beforeLine}-${line.afterLine}-${index}`}>
-            <span>{line.beforeLine ?? ""}</span><span>{line.afterLine ?? ""}</span><b>{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : " "}</b><code>{line.text || " "}</code>
-          </div>)}</div>
-        </section>}
-        <div className="interest-file-meta"><span>config/custom/ai/user_interests.txt</span><time>{updatedAt ? `更新于 ${new Date(updatedAt).toLocaleString("zh-CN")}` : "正在读取…"}</time></div>
-      </div>
-    </section>
-    <section className="interest-actions">
-      <div><span>1</span><strong>保存草稿</strong><p>只写回工作区文件，尚未同步到后台运行副本。</p><button onClick={() => save()} disabled={Boolean(busy) || !content || !hasInterestChanges}>保存草稿</button></div>
-      <div><span>2</span><strong>检查并生效</strong><p>自动保存、检查配置并同步；下一轮定时采集读取。</p><button onClick={() => startAction("deploy")} disabled={Boolean(busy) || Boolean(job?.status === "running")}>检查并生效</button></div>
-      <div className="run-action"><span>3</span><strong>保存并立即运行</strong><p>自动完成前两步并立即采集；可能发送飞书消息。</p><button onClick={() => startAction("run")} disabled={Boolean(busy) || Boolean(job?.status === "running")}>立即运行…</button></div>
-    </section>
-    {job && <section className={`job-console ${job.status}`}><div><span>{job.status === "running" ? "任务执行中" : job.status === "completed" ? "任务已完成" : "任务失败"}</span><strong>{job.kind === "deploy" ? "保存、检查与生效" : "保存并立即运行"}</strong></div><pre>{job.log || "正在启动…"}</pre></section>}
+  return <div className="settings-section">
+    <div className="settings-scroll">
+    <div className="settings-section-head"><h2>RSS 与热榜</h2><span className="kicker">数据源开关</span></div>
+    <label className="settings-master-toggle"><input type="checkbox" checked={config.platforms.enabled} onChange={(event) => setPlatformEnabled(event.target.checked)} /><span>热榜平台抓取</span></label>
+    <div className="settings-toggle-list">
+      {config.platforms.sources.map((source) => <label key={source.id} className={config.platforms.enabled ? "" : "disabled"}><input type="checkbox" checked={source.enabled} disabled={!config.platforms.enabled} onChange={(event) => setSourceEnabled(source.id, event.target.checked)} /><span>{source.name}</span></label>)}
+    </div>
+    <label className="settings-master-toggle"><input type="checkbox" checked={config.rss.enabled} onChange={(event) => setRssEnabled(event.target.checked)} /><span>RSS 订阅</span></label>
+    <div className="settings-toggle-list">
+      {config.rss.feeds.map((feed) => <label key={feed.id} className={config.rss.enabled ? "" : "disabled"}><input type="checkbox" checked={feed.enabled} disabled={!config.rss.enabled} onChange={(event) => setFeedEnabled(feed.id, event.target.checked)} /><span>{feed.name}</span></label>)}
+    </div>
+    {message && <p className="admin-message">{message}</p>}
+    </div>
+    <SaveProgressBar state={saveState} elapsed={saveElapsed} />
+    <div className="settings-actions">
+      <button onClick={save} disabled={Boolean(busy) || job?.status === "running"}>{busy === "save" ? "保存中…" : "保存并立即生效"}</button>
+    </div>
   </div>;
 }
 
@@ -775,7 +1130,7 @@ function InboxView({
   const visible = tab === "pending" ? pending : completed;
 
   return <div className="content inbox-page">
-    <div className="page-intro inbox-intro"><div><span className="kicker">稍后阅读 · 本机持久化</span><h1>把新闻变成，<br />可以处理的清单。</h1></div><p>每条记录保留 DeepSeek 的事件总结、原文、所在实体节点与加入时间。完成后仍留在历史中，随时可以恢复为待办。</p></div>
+    <div className="page-intro inbox-intro"><div><span className="kicker">稍后阅读 · 本机持久化</span><h1>把新闻变成，<br />可以处理的清单。</h1></div><p>每条记录保留 DeepSeek 的进展摘要、原文、所在节点与加入时间。完成后仍留在历史中，随时可以恢复为待办。</p></div>
     <section className="inbox-toolbar">
       <div className="inbox-tabs" role="tablist" aria-label="Inbox 状态">
         <button className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")} role="tab" aria-selected={tab === "pending"}>待办 <span>{pending.length}</span></button>
@@ -785,18 +1140,18 @@ function InboxView({
     </section>
     {message && access === "error" && <p className="inbox-status error">{message}</p>}
     {visible.length === 0 && access !== "loading"
-      ? <section className="inbox-empty"><span>{tab === "pending" ? "INBOX ZERO" : "NO ARCHIVE"}</span><h2>{tab === "pending" ? "当前没有待办新闻" : "还没有完成记录"}</h2><p>{tab === "pending" ? "在实体关系图里打开节点，点击新闻右侧的“收进 Inbox”。" : "处理一条待办后，它会带着完成时间出现在这里。"}</p></section>
+      ? <section className="inbox-empty"><span>{tab === "pending" ? "INBOX ZERO" : "NO ARCHIVE"}</span><h2>{tab === "pending" ? "当前没有待办新闻" : "还没有完成记录"}</h2><p>{tab === "pending" ? "在节点图谱里打开节点，点击新闻右侧的“收进 Inbox”。" : "处理一条待办后，它会带着完成时间出现在这里。"}</p></section>
       : <ol className="inbox-list">{visible.map((item) => <li key={item.id} className={item.completedAt ? "completed" : ""}>
-        <div className="inbox-item-index"><span>{typeNames[item.entityType] ?? "实体"}</span><b>{item.entityName}</b></div>
+        <div className="inbox-item-index"><span>{typeNames[item.entityType] ?? "节点"}</span><b>{item.entityName}</b></div>
         <article>
-          <div className="inbox-item-head"><div><span>{displaySource(item.source)}</span><time>加入 {compactDateTime(item.addedAt)}</time></div><a href={item.originalUrl} target="_blank" rel="noreferrer">原文 ↗</a></div>
-          <h2>{item.title}</h2>
+          <div className="inbox-item-head"><div><span>{displaySource(item.source)}</span><time>加入 {compactDateTime(item.addedAt)}</time></div></div>
+          <h2><a href={item.originalUrl} target="_blank" rel="noreferrer">{item.title}</a></h2>
           <div className="inbox-summary"><span>摘要</span><p>{item.summary}</p></div>
           <footer><div>{item.completedAt ? <time>完成于 {compactDateTime(item.completedAt)}</time> : <span>待处理</span>}</div><div className="inbox-item-actions"><button type="button" disabled={busyId === item.id} onClick={async () => {
             setBusyId(item.id);
             try { await onToggle(item, !item.completedAt); } finally { setBusyId(""); }
           }}>{busyId === item.id ? "保存中…" : item.completedAt ? "恢复待办" : "标记完成"}</button><button type="button" className="danger" disabled={busyId === item.id} onClick={async () => {
-            if (!window.confirm("确定从 Inbox 彻底移除这条新闻吗？移除后可从实体侧栏再次收进。")) return;
+            if (!window.confirm("确定从 Inbox 彻底移除这条新闻吗？移除后可从节点侧栏再次收进。")) return;
             setBusyId(item.id);
             try { await onRemove(item); } finally { setBusyId(""); }
           }}>{busyId === item.id ? "保存中…" : "移除"}</button></div></footer>
@@ -873,21 +1228,21 @@ function EntityDetail({
   return <div className="entity-detail-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <aside className="entity-detail">
       <button className="entity-close" onClick={onClose} aria-label="关闭">×</button>
-      <span className="entity-type detail-type"><i style={{ background: entity.color }} />{typeNames[entity.type] ?? "实体"}</span>
+      <span className="entity-type detail-type"><i style={{ background: entity.color }} />{typeNames[entity.type] ?? "节点"}</span>
       <h2>{entity.name}</h2>
       <p className="entity-observed">采集范围 {entity.firstObservedAt.slice(0, 16).replace("T", " ")} — {entity.lastObservedAt.slice(0, 16).replace("T", " ")}</p>
       <div className="entity-detail-metrics">
-        <div><span>当前热度</span><strong>{entity.strength}</strong></div>
-        <div><span>事件变化 / 3h</span><strong>{entity.eventChanges3h}</strong></div>
-        <div><span>媒体扩散 / 3h</span><strong>{entity.spread3h}</strong></div>
+        <div><span>当前关注度</span><strong>{entity.strength}</strong></div>
+        <div><span>新增进展 / 3h</span><strong>{entity.eventChanges3h}</strong></div>
+        <div><span>来源扩散 / 3h</span><strong>{entity.spread3h}</strong></div>
         <div><span>累计线索</span><strong>{entity.storyCount}</strong></div>
       </div>
       <HeatTrend entity={entity} />
       {playback && <div className={`playback-focus-summary ${focusedNews ? "" : "empty"}`} role="status">
-        <span>{focusedNews?.inFrame ? "该时段事件" : "截至该时间"}</span>
-        <div><strong>{playback.frame.label}</strong><small>{focusedNews ? (focusedNews.inFrame ? "已滑动到这个时间帧对应的事件" : "该时段没有新的相关线索，已定位到此前最近事件") : "这个时间点之前暂无可定位的事件"}</small></div>
+        <span>{focusedNews?.inFrame ? "该时段进展" : "截至该时间"}</span>
+        <div><strong>{playback.frame.label}</strong><small>{focusedNews ? (focusedNews.inFrame ? "已滑动到这个时间片对应的进展" : "该时段没有新的相关线索，已定位到此前最近进展") : "这个时间点之前暂无可定位的进展"}</small></div>
       </div>}
-      <section className="entity-detail-section"><div className="entity-section-title"><h3>事件演化</h3><span>优先按新闻发布时间排列</span></div>
+      <section className="entity-detail-section"><div className="entity-section-title"><h3>进展时间线</h3><span>优先按新闻发布时间排列</span></div>
         <ol className="entity-event-list">{displayTimeline.map((event) => {
           const containsFocus = Boolean(focusedNews && event.evidence.some((item) => sameEvidence(item, focusedNews.evidence)));
           return <li ref={containsFocus ? focusedEventRef : undefined} key={event.id} className={containsFocus ? "playback-focus-event" : ""} aria-current={containsFocus ? "true" : undefined}>
@@ -934,15 +1289,36 @@ function EntityDetail({
   </div>;
 }
 
+function NodesEmpty({ searching, query, matched, onClear }: { searching: boolean; query: string; matched: number; onClear: () => void }) {
+  if (searching) {
+    return <div className="nodes-empty">
+      <span>没有匹配</span>
+      <h2>没有找到「{query.trim()}」</h2>
+      <p>换个关键词试试，或者清空搜索看全部节点。</p>
+      <button type="button" onClick={onClear}>清空搜索</button>
+    </div>;
+  }
+  return <div className="nodes-empty">
+    <span>等待采集</span>
+    <h2>还没有可观测的节点</h2>
+    <p>{matched > 0
+      ? `本轮有 ${formatNumber(matched)} 条兴趣线索，但还没有抽出可追踪的节点；下一轮采集会重新抽取。`
+      : "下一轮采集会按当前兴趣规则筛选新闻，完成后这里才会出现节点。采集按固定节奏运行，完成后刷新本页即可看到结果。"}</p>
+  </div>;
+}
+
 function EntityRadarWorkspace({ snapshot, view }: { snapshot: Snapshot; view: View }) {
   const [query, setQuery] = useState("");
   const [entityType, setEntityType] = useState("全部");
   const [selected, setSelected] = useState<EntitySelection | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [status, setStatus] = useState<StatusReport | null>(null);
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
   const [inboxAccess, setInboxAccess] = useState<InboxAccess>("loading");
   const [inboxMessage, setInboxMessage] = useState("");
-
+  const reportStatus = useCallback((text: string, kind: StatusReport["kind"] = "ok") => setStatus({ kind, text }), []);
+  const searching = query.trim().length > 0;
   const filtered = useMemo(() => { const needle = query.trim().toLowerCase(); return snapshot.entities.filter((entity) => (entityType === "全部" || entity.type === entityType) && (!needle || [entity.name, ...entity.timeline.map((event) => event.name)].join(" ").toLowerCase().includes(needle))); }, [entityType, query, snapshot.entities]);
   const types = useMemo(() => Array.from(new Set(snapshot.entities.map((entity) => entity.type))).map((type) => ({ type, count: snapshot.entities.filter((entity) => entity.type === type).length })), [snapshot.entities]);
   const eventCount = snapshot.entities.reduce((sum, entity) => sum + entity.timeline.length, 0);
@@ -1003,57 +1379,168 @@ function EntityRadarWorkspace({ snapshot, view }: { snapshot: Snapshot; view: Vi
 
   return <main className="app-shell entity-app">
     <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
-      <div className="brand"><div className="brand-mark"><span /><i /><b /></div><div><strong>实体雷达</strong><small>TrendRadar Graph</small></div></div>
+      <div className="brand"><div className="brand-mark"><span /><i /><b /></div><div><strong>热点观测台</strong></div></div>
       <nav className="main-nav" aria-label="主要视图">
-        <Link href="/entities" className={view === "entities" ? "active" : ""} onClick={() => setMobileNav(false)}><span>◫</span>活跃实体<small>{snapshot.meta.entityCount}</small></Link>
-        <Link href="/graph" className={view === "graph" ? "active" : ""} onClick={() => setMobileNav(false)}><span>⌘</span>实体关系<small>{snapshot.meta.relationCount}</small></Link>
-        <Link href="/interests" className={view === "interests" ? "active" : ""} onClick={() => setMobileNav(false)}><span>✦</span>兴趣设置<small>LLM</small></Link>
+        <Link href="/entities" className={view === "entities" ? "active" : ""} onClick={() => setMobileNav(false)}><span>◫</span>活跃节点<small>{snapshot.meta.entityCount}</small></Link>
+        <Link href="/graph" className={view === "graph" ? "active" : ""} onClick={() => setMobileNav(false)}><span>⌘</span>节点关联<small>{snapshot.meta.relationCount}</small></Link>
         <Link href="/inbox" className={view === "inbox" ? "active" : ""} onClick={() => setMobileNav(false)}><span>□</span>Inbox / 待办<small>{inboxAccess === "ready" ? pendingInboxCount : "—"}</small></Link>
       </nav>
-      <div className="sidebar-section"><div className="sidebar-section-title"><span>实体类型</span><button onClick={() => setEntityType("全部")}>重置</button></div>
-        <button className={`topic-filter ${entityType === "全部" ? "active" : ""}`} onClick={() => setEntityType("全部")}><i className="all-dot" />全部实体<strong>{snapshot.meta.entityCount}</strong></button>
+      <div className="sidebar-section"><div className="sidebar-section-title"><span>节点类型</span><button onClick={() => setEntityType("全部")}>重置</button></div>
+        <button className={`topic-filter ${entityType === "全部" ? "active" : ""}`} onClick={() => setEntityType("全部")}><i className="all-dot" />全部节点<strong>{snapshot.meta.entityCount}</strong></button>
         {types.map((item) => <button className={`topic-filter ${entityType === item.type ? "active" : ""}`} key={item.type} onClick={() => setEntityType(item.type)}><i style={{ background: snapshot.entities.find((entity) => entity.type === item.type)?.color }} />{typeNames[item.type] ?? item.type}<strong>{item.count}</strong></button>)}
       </div>
-      <div className="sidebar-snapshot"><span><i /> LLM 实体抽取完成</span><p>{formatNumber(snapshot.meta.extractedTitles)} 个标题 · {snapshot.meta.entityCount} 个实体</p><small>数据更新至 {snapshot.meta.dataTo} {displayClock(snapshot.meta.latestCrawl)}</small></div>
+      <div className="sidebar-snapshot"><span><i /> {snapshot.meta.entityCount > 0 ? "节点抽取完成" : "等待采集"}</span><p>{formatNumber(snapshot.meta.extractedTitles)} 个标题 · {snapshot.meta.entityCount} 个节点</p><small>数据更新至 {snapshot.meta.dataTo} {displayClock(snapshot.meta.latestCrawl)}</small>{status && <small className={`collection-status ${status.kind}`}>{status.text}</small>}</div>
     </aside>
     <section className="workspace">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="打开导航">☰</button><div className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Kimi、英伟达、GPT 或具体事件…" /><kbd>⌘ K</kbd></div><div className="topbar-actions"><span className="live-pill"><i /> ENTITY</span></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="打开导航">☰</button>{view !== "inbox" && <div className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索节点" aria-label="搜索节点" /></div>}<div className="topbar-actions"><button className="settings-button" onClick={() => setSettingsOpen(true)} aria-label="打开设置">⚙</button><span className="live-pill"><i /> LIVE</span></div></header>
       {view === "entities" && <div className="content entity-overview">
-        <section className="metric-strip"><div><span>具体实体</span><strong>{snapshot.meta.entityCount}</strong><small>不含宽泛行业词</small></div><div><span>兴趣线索</span><strong>{formatNumber(snapshot.meta.matchedRecords)}</strong><small>由 LLM 预筛选</small></div><div><span>事件节点</span><strong>{eventCount}</strong><small>优先按新闻发布时间组织</small></div><div><span>实体关系</span><strong>{snapshot.meta.relationCount}</strong><small>来自新闻中的实际共现</small></div></section>
-        <div className="entity-overview-grid"><section><div className="section-heading"><div><h2>具体实体</h2><p>热度保留趋势；另外拆出事件变化和媒体扩散</p></div><span>{filtered.length} 个实体</span></div><div className="entity-card-list">{filtered.slice(0, 12).map((entity) => <EntityCard entity={entity} onSelect={(item) => setSelected({ entity: item })} key={entity.id} />)}</div></section><section className="entity-graph-panel"><div className="section-heading"><div><h2>互联关系</h2><p>圆圈是热度，实线外环是事件变化，虚线外环是媒体扩散</p></div><Link href="/graph">展开 ↗</Link></div><EntityGraph entities={filtered.slice(0, 18)} edges={snapshot.edges} onSelect={(item) => setSelected({ entity: item })} /></section></div>
+        <section className="metric-strip"><div><span>节点</span><strong>{snapshot.meta.entityCount}</strong><small>不含宽泛行业词</small></div><div><span>兴趣线索</span><strong>{formatNumber(snapshot.meta.matchedRecords)}</strong><small>由 LLM 预筛选</small></div><div><span>进展</span><strong>{eventCount}</strong><small>优先按新闻发布时间组织</small></div><div><span>节点关联</span><strong>{snapshot.meta.relationCount}</strong><small>来自新闻中的实际共现</small></div></section>
+        {filtered.length === 0 ? <NodesEmpty searching={searching} query={query} matched={snapshot.meta.matchedRecords} onClear={() => setQuery("")} /> : <div className="entity-overview-grid"><section><div className="section-heading"><div><h2>节点</h2><p>关注度保留趋势；另外拆出新增进展和来源扩散</p></div><span>{filtered.length} 个节点</span></div><div className="entity-card-list">{filtered.slice(0, 12).map((entity) => <EntityCard entity={entity} onSelect={(item) => setSelected({ entity: item })} key={entity.id} />)}</div></section><section className="entity-graph-panel"><div className="section-heading"><div><h2>互联关系</h2><p>圆圈是关注度，实线外环是新增进展，虚线外环是来源扩散</p></div><Link href="/graph">展开 ↗</Link></div><EntityGraph entities={filtered.slice(0, 18)} edges={snapshot.edges} onSelect={(item) => setSelected({ entity: item })} /></section></div>}
       </div>}
-      {view === "graph" && <div className="content entity-page"><div className="entity-graph-stage"><PlaybackGraph entities={filtered} frames={snapshot.frames} layoutEdges={snapshot.edges} onSelect={(entity, playback) => setSelected({ entity, playback })} /></div></div>}
-      {view === "interests" && <InterestSettings />}
+      {view === "graph" && <div className="content entity-page">{filtered.length === 0 ? <NodesEmpty searching={searching} query={query} matched={snapshot.meta.matchedRecords} onClear={() => setQuery("")} /> : <div className="entity-graph-stage"><PlaybackGraph entities={filtered} frames={snapshot.frames} layoutEdges={snapshot.edges} onSelect={(entity, playback) => setSelected({ entity, playback })} /></div>}</div>}
       {view === "inbox" && <InboxView items={inboxItems} access={inboxAccess} message={inboxMessage} onToggle={toggleInbox} onRemove={removeFromInbox} />}
     </section>
     {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="关闭导航" />}
-    {selected && <EntityDetail entity={selected.entity} playback={selected.playback} inboxItems={inboxItems} onAddInbox={addToInbox} onClose={() => setSelected(null)} />}
+    {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} onReport={reportStatus} onInterestsCleared={() => setSettingsOpen(false)} />}    {selected && <EntityDetail entity={selected.entity} playback={selected.playback} inboxItems={inboxItems} onAddInbox={addToInbox} onClose={() => setSelected(null)} />}
   </main>;
 }
 
+function FirstUseGuidance({ readiness, onOpenSettings, status }: { readiness: Readiness; onOpenSettings: () => void; status: StatusReport | null }) {
+  const missing: string[] = [];
+  if (!readiness.interestsValid) missing.push("有效兴趣规则");
+  if (!readiness.apiKeySet) missing.push("AI 分析凭据");
+  const needsInterests = !readiness.interestsValid;
+  return <main className="snapshot-gate guidance-gate">
+    <div>
+      <span>OBSERVATION DECK · 首次使用</span>
+      <h1>先完成配置，<br />再开始采集。</h1>
+      <p>“活跃节点”和“节点关联”需要两样东西：一份有效兴趣规则，以及一个可用的 AI 分析凭据。当前缺少：{missing.join("、")}。</p>
+      {!readiness.apiKeySet && <p className="gate-hint">AI 分析凭据在项目根目录的 .env 中配置（AI_API_KEY），保存后重启预览即可，无需在页面里填写。</p>}
+      <div className="gate-actions">
+        {needsInterests && <button onClick={onOpenSettings}>打开设置</button>}
+      </div>
+      {status && <p className={`collection-status ${status.kind}`}>{status.text}</p>}
+    </div>
+  </main>;
+}
+
+function FirstRunGate({ onStart, job, status }: { onStart: () => void; job: AdminJob | null; status: StatusReport | null }) {
+  const running = job?.status === "running";
+  return <main className="snapshot-gate first-run-gate">
+    <div>
+      <span>OBSERVATION DECK · 准备就绪</span>
+      <h1>配置完成，<br />开始首次采集。</h1>
+      <p>还没有观测快照。开始后将调用 TrendRadar 原生采集流程，完成热榜/RSS 采集、AI 过滤与节点关联抽取；可能按现有设置发送飞书消息。</p>
+      <p className="gate-hint">采集与分析大约需要一分钟，请停留在本页不要离开。不点也可以——定时任务会在下一轮自动采集。</p>
+      <div className="gate-actions">
+        <button onClick={onStart} disabled={running}>{running ? "正在采集与分析…" : "开始采集与分析"}</button>
+      </div>
+      {status && <p className={`collection-status ${status.kind}`}>{status.text}</p>}
+      {running && <pre className="gate-log">{job?.log || "正在启动…"}</pre>}
+    </div>
+  </main>;
+}
+
+function useButtonRipple() {
+  useEffect(() => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || reduceMotion.matches) return;
+      const target = event.target instanceof Element ? event.target.closest("button") : null;
+      if (!(target instanceof HTMLButtonElement) || target.disabled) return;
+      const rect = target.getBoundingClientRect();
+      if (rect.width < 16 || rect.height < 16) return;
+      // 以点击坐标为圆心：波纹基础直径取按钮宽度，动画缩放到 2.4 倍。
+      target.style.setProperty("--ripple-x", `${event.clientX - rect.left}px`);
+      target.style.setProperty("--ripple-y", `${event.clientY - rect.top}px`);
+      target.style.setProperty("--ripple-size", `${rect.width}px`);
+      target.removeAttribute("data-ripple");
+      void target.offsetWidth; // 强制回流，让连续点击都能重新触发动画
+      target.setAttribute("data-ripple", "run");
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+}
+
 export default function EntityRadar({ view }: { view: View }) {
+  useButtonRipple();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState("");
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [status, setStatus] = useState<StatusReport | null>(null);
+  const [runJob, setRunJob] = useState<AdminJob | null>(null);
+  const reportStatus = useCallback((text: string, kind: StatusReport["kind"] = "ok") => setStatus({ kind, text }), []);
 
   const loadSnapshot = useCallback(async () => {
     setError("");
     try {
       const response = await fetch("/api/local-admin/entities", { cache: "no-store" });
       const value = await response.json();
-      if (!response.ok) throw new Error(value.error || "无法读取实体快照");
+      if (!response.ok) throw new Error(value.error || "无法读取观测快照");
       const next = value.snapshot as Snapshot;
-      if (!next?.meta?.generatedAt) throw new Error("实体快照格式无效");
+      if (!next?.meta?.generatedAt) throw new Error("观测快照格式无效");
       setSnapshot(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(loadSnapshot, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadSnapshot]);
+  const loadReadiness = useCallback(async () => {
+    try {
+      const value = await localAdminRequest("/readiness");
+      setReadiness({ interestsValid: Boolean(value.interestsValid), apiKeySet: Boolean(value.apiKeySet) });
+    } catch {
+      setReadiness({ interestsValid: false, apiKeySet: false });
+    }
+  }, []);
 
-  if (!snapshot) return <main className="snapshot-gate"><div><span>ENTITY RADAR</span><h1>{error ? "无法读取实体快照" : "正在读取最新实体快照"}</h1><p>{error || "页面只读取运行副本中的唯一节点分析结果。"}</p>{error && <button onClick={loadSnapshot}>重新读取</button>}</div></main>;
-  return <EntityRadarWorkspace snapshot={snapshot} view={view} />;
+  useEffect(() => {
+    const timer = window.setTimeout(() => { loadSnapshot(); loadReadiness(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSnapshot, loadReadiness]);
+
+  useEffect(() => {
+    if (!runJob || runJob.status !== "running") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const value = await localAdminRequest(`/jobs/${runJob.id}`);
+        setRunJob(value);
+        if (value.status === "completed") {
+          reportStatus("首次采集完成，正在加载热点观测台…", "ok");
+          window.setTimeout(() => { loadSnapshot(); loadReadiness(); }, 800);
+        } else if (value.status === "failed") {
+          reportStatus(`采集失败：${value.error || "任务失败"}`, "error");
+        }
+      } catch (reason) {
+        reportStatus(`采集失败：${reason instanceof Error ? reason.message : String(reason)}`, "error");
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [runJob, loadSnapshot, loadReadiness, reportStatus]);
+
+  async function startRun() {
+    if (!window.confirm("开始首次采集与分析？可能按现有设置发送飞书消息。")) return;
+    reportStatus("正在启动采集与分析，大约需要一分钟，请勿离开本页…", "loading");
+    try {
+      const value = await localAdminRequest("/actions/run", { method: "POST", body: JSON.stringify({ confirm: "RUN_AND_MAY_PUSH" }) });
+      setRunJob(value);
+    } catch (reason) {
+      reportStatus(`启动失败：${reason instanceof Error ? reason.message : String(reason)}`, "error");
+    }
+  }
+
+  const ready = Boolean(readiness && readiness.interestsValid && readiness.apiKeySet);
+
+  return <>
+    {readiness === null
+      ? <main className="snapshot-gate"><div><span>OBSERVATION DECK</span><h1>{error ? "无法读取观测快照" : "正在读取最新观测快照"}</h1><p>{error || "页面只读取运行副本中的唯一节点分析结果。"}</p>{error && <button onClick={loadSnapshot}>重新读取</button>}</div></main>
+      : !ready
+        ? <FirstUseGuidance readiness={readiness} onOpenSettings={() => setSettingsOpen(true)} status={status} />
+        : !snapshot
+          ? <FirstRunGate onStart={startRun} job={runJob} status={status} />
+          : <EntityRadarWorkspace snapshot={snapshot} view={view} />}
+    {settingsOpen && <SettingsPanel onClose={() => { setSettingsOpen(false); loadReadiness(); }} onReport={reportStatus} onInterestsCleared={() => { setSettingsOpen(false); loadReadiness(); }} />}
+  </>;
 }
