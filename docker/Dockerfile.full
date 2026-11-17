@@ -1,0 +1,64 @@
+FROM node:22-bookworm-slim AS web-build
+
+WORKDIR /build/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+
+FROM node:22-bookworm-slim
+
+ARG TARGETARCH
+ENV SUPERCRONIC_VERSION=v0.2.39
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && case "${TARGETARCH}" in \
+      amd64) SUPERCRONIC_ARCH=amd64 ;; \
+      arm64) SUPERCRONIC_ARCH=arm64 ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 \
+      -o /usr/local/bin/supercronic \
+      "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${SUPERCRONIC_ARCH}" \
+    && chmod +x /usr/local/bin/supercronic \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv python install 3.12 \
+    && uv sync --python 3.12 --locked --no-install-project --no-dev
+
+COPY trendradar/ ./trendradar/
+COPY mcp_server/ ./mcp_server/
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY --from=web-build /build/web ./web/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --python 3.12 --locked --no-dev \
+    && chmod +x scripts/run-trendradar.sh scripts/run-trendradar-local.sh scripts/initialize-user-config.sh scripts/update-web-entity-snapshot.sh
+
+COPY docker/entrypoint-full.sh /entrypoint-full.sh
+RUN chmod +x /entrypoint-full.sh && mkdir -p /data/web /data/meta
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    TREND_RADAR_PROJECT_DIR=/app \
+    TREND_RADAR_CONFIG_DIR=/app/config \
+    TREND_RADAR_DATA_DIR=/data \
+    TREND_RADAR_INBOX_PATH=/data/inbox.json \
+    TREND_RADAR_DEPLOY_MODE=direct \
+    TREND_RADAR_TRUST_LOCAL_ORIGIN=false \
+    TREND_RADAR_INBOX_PUBLIC=false \
+    CONFIG_PATH=/app/config/config.yaml \
+    FREQUENCY_WORDS_PATH=/app/config/frequency_words.txt \
+    TREND_RADAR_WEB_PORT=3002 \
+    TREND_RADAR_ADMIN_PORT=3003
+
+EXPOSE 3002
+ENTRYPOINT ["/entrypoint-full.sh"]

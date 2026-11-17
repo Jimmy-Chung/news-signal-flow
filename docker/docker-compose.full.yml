@@ -1,0 +1,51 @@
+services:
+  trendradar-full:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.full
+    image: trendradar-full:local
+    restart: unless-stopped
+    env_file:
+      - .env.full
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      TIMEZONE: ${TIMEZONE:-Asia/Shanghai}
+      CRON_SCHEDULE: ${CRON_SCHEDULE:-*/30 * * * *}
+      IMMEDIATE_RUN: ${IMMEDIATE_RUN:-false}
+      TREND_RADAR_ADMIN_TOKEN: ${TREND_RADAR_ADMIN_TOKEN:?set TREND_RADAR_ADMIN_TOKEN in docker/.env.full}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_BASE: ${AI_API_BASE:-}
+      FEISHU_WEBHOOK_URL: ${FEISHU_WEBHOOK_URL:-}
+    volumes:
+      - ../config:/app/config
+      - ../output:/data
+    expose:
+      - "3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/entities').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      trendradar-full:
+        condition: service_healthy
+    environment:
+      TREND_RADAR_DOMAIN: ${TREND_RADAR_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.full:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

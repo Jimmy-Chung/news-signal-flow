@@ -1,0 +1,27 @@
+.DS_Store
+.venv/
+.codex/
+__pycache__/
+*.py[cod]
+*.log
+
+# 本地生成的数据和报告
+output/
+index.html
+web/app/data/events.json
+web/tsconfig.tsbuildinfo
+
+# 个人筛选规则；公开仓库只保留 *.example.txt
+config/custom/ai/user_interests.txt
+config/custom/keyword/user_must_notify.txt
+
+# 本机运维文件；公开仓库只保留通用示例
+AGENTS.md
+local/*.plist
+!local/*.plist.example
+
+# 本地凭证文件兜底；正式配置使用 macOS 钥匙串
+.env
+.env.full
+.env.local
+secrets.env

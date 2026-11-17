@@ -1,0 +1,4 @@
+{$TREND_RADAR_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy trendradar-full:3002
+}

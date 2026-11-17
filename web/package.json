@@ -1,0 +1,54 @@
+{
+  "name": "trend-radar-event-map",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
+    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "preview:local": "node scripts/start_local_preview.mjs",
+    "admin:local": "node scripts/local_admin_server.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "export:data": "npm run export:data:filtered",
+    "export:data:broad": "python3 scripts/export_broad_data.py --runtime-output \"$HOME/Library/Application Support/TrendRadar/runtime/output\" --output app/data/events.json --days 9",
+    "export:data:filtered": "python3 scripts/export_data.py --runtime-output \"$HOME/Library/Application Support/TrendRadar/runtime/output\" --output app/data/events.json --days 9",
+    "export:entities": "bash scripts/run_entity_export.sh",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.4",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.69.1",
+    "@tailwindcss/postcss": "4.3.5",
+    "@types/node": "22.19.19",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "@vitejs/plugin-rsc": "0.5.39",
+    "drizzle-kit": "0.31.11",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.4.6",
+    "react-server-dom-webpack": "19.3.1",
+    "tailwindcss": "4.3.5",
+    "typescript": "5.9.3",
+    "vinext": "0.2.1",
+    "vite": "8.3.8",
+    "wrangler": "4.163.0"
+  },
+  "overrides": {
+    "@vercel/og": "1.0.3",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "image-size": "2.1.0",
+    "satori": "0.63.2"
+  },
+  "type": "module"
+}
