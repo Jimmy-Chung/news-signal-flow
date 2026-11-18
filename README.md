@@ -6,7 +6,7 @@ News Signal Flow 会采集你感兴趣的话题和新闻，再渲染成节点图
 
 本项目是 [TrendRadar](https://github.com/sansan0/TrendRadar) 的修改版，非官方版本。许可与修改说明见文末「来源与许可」。
 
-## 怎么用
+## 如何使用
 
 ### 1. 按兴趣设置，然后采集
 
@@ -45,13 +45,13 @@ News Signal Flow 会采集你感兴趣的话题和新闻，再渲染成节点图
 
 ## 部署
 
-要单独准备两件事：一个一直在跑的采集服务，一个用来看结果的网页。模型 API 另外配置，筛选和分析会产生调用费用。
+要单独准备两件事：一个一直在跑的采集服务，一个用来看结果的网页。
 
 Docker Compose 适合服务器，一条命令同时把采集和网页拉起来。macOS / Linux 本机是分开的：采集靠定时任务，网页单独启动。
 
 ### Docker Compose
 
-准备一台能访问新闻源和模型 API 的 Linux 服务器，装好 Docker 与 Docker Compose。用域名访问时，把域名指到这台机器，并开放 80、443。Caddy 负责 HTTPS。
+准备一台能访问新闻源的 Linux 服务器，装好 Docker 与 Docker Compose。用域名访问时，把域名指到这台机器，并开放 80、443。Caddy 负责 HTTPS。
 
 ```bash
 git clone https://github.com/Jimmy-Chung/news-signal-flow.git
@@ -60,7 +60,7 @@ cp docker/.env.full.example docker/.env.full
 bash scripts/initialize-user-config.sh
 ```
 
-编辑 `docker/.env.full`：`TREND_RADAR_DOMAIN`、`TREND_RADAR_ADMIN_TOKEN`（`openssl rand -hex 32`）、`AI_API_KEY`、`AI_MODEL`。`AI_API_BASE` 和 `FEISHU_WEBHOOK_URL` 可选。不要提交填好的环境文件。
+编辑 `docker/.env.full`：`TREND_RADAR_DOMAIN`、`TREND_RADAR_ADMIN_TOKEN`（`openssl rand -hex 32`）。`FEISHU_WEBHOOK_URL` 可选。不要提交填好的环境文件。
 
 再编辑 `config/custom/ai/user_interests.txt`，然后启动。容器里的采集默认每 30 分钟跑一次，网页一起起来。频率用 `CRON_SCHEDULE` 改。
 
@@ -85,7 +85,7 @@ uv sync --locked
 bash scripts/initialize-user-config.sh
 ```
 
-编辑兴趣文件，并在当前终端设置模型和目录：
+编辑兴趣文件，并在当前终端设置目录：
 
 ```bash
 export TREND_RADAR_PROJECT_DIR="$PWD"
@@ -93,8 +93,6 @@ export TREND_RADAR_CONFIG_DIR="$PWD/config"
 export TREND_RADAR_DATA_DIR="$PWD/output"
 export TREND_RADAR_DEPLOY_MODE=direct
 export TREND_RADAR_ADMIN_TOKEN="$(openssl rand -hex 32)"
-export AI_API_KEY="填写你的 API Key"
-export AI_MODEL="deepseek/deepseek-chat"
 ```
 
 采集自己跑，网页另外开。本机不会自动定时，把 `bash scripts/run-trendradar.sh` 接到 cron 或系统任务里，采集才会一直进行。关掉网页不会删掉已采集的数据。
@@ -113,11 +111,11 @@ cd web && npm ci && npm run build && npm run preview:local
 - `config/`：兴趣和采集配置。
 - `output/`：新闻数据库、节点图、Inbox。
 
-备份时带走这两个目录，密钥另外保存。图谱默认只整理最近 9 天。兴趣和新闻标题会发给你配置的模型，密钥、兴趣、数据库和 Inbox 不要提交到仓库。
+备份时带走这两个目录，管理口令另外保存。图谱默认只整理最近 9 天。管理口令、兴趣、数据库和 Inbox 不要提交到仓库。
 
 ## 关于数据与来源
 
-新闻进展由模型根据标题归纳，可能存在遗漏、误合并或误判，请通过原文核对。热榜通常没有可靠发布时间，系统会回退到首次采集时间，并在详情中标记。因此时间回放展示的是采集范围内可观察到的变化。
+热榜通常没有可靠发布时间，系统会回退到首次采集时间，并在详情中标记。因此时间回放展示的是采集范围内可观察到的变化。
 
 热榜数据依赖上游接入的 [newsnow](https://github.com/ourongxing/newsnow) 服务，RSS 来自配置的订阅源。
 
@@ -134,7 +132,7 @@ cd web && npm ci && npm run build && npm run preview:local
 
 在上游基础上做出的修改：
 
-- 保留上游的热榜/RSS 采集、AI 兴趣筛选、通知与报告能力，内核 `trendradar/`、`mcp_server/` 大部分保持原样；
+- 保留上游的热榜/RSS 采集、兴趣筛选、通知与报告能力，内核 `trendradar/`、`mcp_server/` 大部分保持原样；
 - 新增 `web/` 节点观测界面（Next.js）：节点列表、节点图谱、三小时时间片回放、Inbox；
 - 新增 `web/scripts/export_entity_data.py` 等脚本，把兴趣筛选结果整理成节点快照；
 - 新增 `docker/Dockerfile.full`、`docker/entrypoint-full.sh` 与 `scripts/` 下的本地部署脚本；
